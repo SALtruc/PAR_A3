@@ -1,0 +1,22 @@
+# ROS 2 build artefacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.eggs/
+
+# Generated QR images (re-generate with tools/generate_qr_codes.py)
+qr_codes/
+
+# Logs
+*.csv
+~/rosbot_qr_logs/
+
+# OS
+.DS_Store
+Thumbs.db

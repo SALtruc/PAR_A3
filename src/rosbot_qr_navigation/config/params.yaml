@@ -1,0 +1,55 @@
+# params.yaml – Project A: QR Code Command Navigation
+# All values can be overridden from the launch file or CLI.
+
+qr_detector:
+  ros__parameters:
+    image_topic: /camera/color/image_raw   # OAK-D Pro RGB topic on ROSbot
+    show_debug: false                       # set true to open OpenCV preview window
+    min_qr_area: 800                        # px²; ignore QR detections smaller than this
+    debounce_sec: 2.0                       # suppress re-publishing same command (seconds)
+
+command_interpreter:
+  ros__parameters:
+    simultaneous_window_sec: 0.3           # seconds; commands within this window = simultaneous
+
+navigation_fsm:
+  ros__parameters:
+    cmd_vel_topic: /cmd_vel
+    start_state: DRIVING                   # DRIVING | STOPPED
+    cruise_speed:  0.20                    # m/s  – normal forward speed
+    slow_speed:    0.10                    # m/s  – RECOVERING state speed
+    speed_step:    0.05                    # m/s  – per SPEED_UP / SPEED_DOWN command
+    max_speed:     0.40                    # m/s  – upper clamp
+    min_speed:     0.05                    # m/s  – lower clamp
+    turn_speed:    0.50                    # rad/s – angular velocity during turns
+    # Calibrate these on the real ROSbot by timing a 90° turn on a flat surface:
+    turn_90_sec:   3.14                    # seconds for a 90° open-loop turn
+    turn_180_sec:  6.28                    # seconds for a 180° open-loop turn
+    recovery_sec:  10.0                    # enter RECOVERING after this many seconds without QR
+    scan_topic: /scan                      # LaserScan topic for obstacle checks
+    obstacle_distance: 0.45                # meters; GO triggers avoidance below this
+    obstacle_front_angle_deg: 30.0         # +/- front cone checked for obstacles
+    avoid_turn_sec: 3.14                   # timed 90 degree turn away/back
+    avoid_forward_sec: 1.5                 # sidestep duration before turning back
+    avoid_turn_direction: 1.0              # +1 left-first, -1 right-first
+
+    # IMU-assisted turns (Project A improvement)
+    imu_topic: /imu/data                  # sensor_msgs/Imu – set to /imu/data on ROSbot
+    use_imu_for_turns: true               # false = pure timer (original behaviour)
+
+    # ToF emergency stop (Project C safety layer)
+    tof_topic: /range                     # sensor_msgs/Range from VL53L0X
+    tof_emergency_dist: 0.15              # meters; hard stop when closer than this
+
+    # Depth camera secondary obstacle sensor (Project C sensor fusion)
+    depth_topic: /camera/depth/image_rect_raw
+    depth_obstacle_dist: 0.50             # meters; triggers avoidance if depth < this
+    depth_center_fraction: 0.33           # central ROI fraction of image for depth check
+
+    # Wall-following in RECOVERING (Project C integration)
+    wall_follow_kp: 0.4                   # proportional gain; increase = stronger correction
+    wall_sector_deg: 60.0                 # half-width of left/right LIDAR sectors (degrees)
+
+event_logger:
+  ros__parameters:
+    log_dir: ~/rosbot_qr_logs             # directory for CSV event logs
