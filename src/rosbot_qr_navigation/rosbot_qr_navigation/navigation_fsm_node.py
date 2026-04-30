@@ -22,7 +22,7 @@ from collections import deque
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from rclpy.node import Node
 from sensor_msgs.msg import Image, Imu, LaserScan, Range
 from std_msgs.msg import String
@@ -72,6 +72,19 @@ DEFAULT_DEPTH_CENTER_FRACTION = 0.33  # fraction of image width/height for cente
 DEFAULT_WALL_FOLLOW_KP = 0.4         # proportional gain on left/right distance error
 DEFAULT_WALL_SECTOR_DEG = 60.0       # half-width of left/right LIDAR sectors
 
+# ROSbot snap controllers commonly subscribe to geometry_msgs/TwistStamped on
+# /cmd_vel. Keep this configurable so simulator or older stacks can use Twist.
+DEFAULT_CMD_VEL_STAMPED = True
+DEFAULT_CMD_VEL_FRAME_ID = 'base_link'
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
 
 class NavigationFSMNode(Node):
 
@@ -107,6 +120,8 @@ class NavigationFSMNode(Node):
         self.declare_parameter('depth_center_fraction', DEFAULT_DEPTH_CENTER_FRACTION)
         self.declare_parameter('wall_follow_kp', DEFAULT_WALL_FOLLOW_KP)
         self.declare_parameter('wall_sector_deg', DEFAULT_WALL_SECTOR_DEG)
+        self.declare_parameter('cmd_vel_stamped', DEFAULT_CMD_VEL_STAMPED)
+        self.declare_parameter('cmd_vel_frame_id', DEFAULT_CMD_VEL_FRAME_ID)
 
         self.cruise_speed = self.get_parameter('cruise_speed').value
         self.slow_speed = self.get_parameter('slow_speed').value
@@ -130,7 +145,9 @@ class NavigationFSMNode(Node):
         self.avoid_turn_direction = self.get_parameter('avoid_turn_direction').value
 
         self.tof_emergency_dist = self.get_parameter('tof_emergency_dist').value
-        self.use_imu_for_turns = self.get_parameter('use_imu_for_turns').value
+        self.use_imu_for_turns = _as_bool(self.get_parameter('use_imu_for_turns').value)
+        self.cmd_vel_stamped = _as_bool(self.get_parameter('cmd_vel_stamped').value)
+        self.cmd_vel_frame_id = self.get_parameter('cmd_vel_frame_id').value
         self.depth_obstacle_dist = self.get_parameter('depth_obstacle_dist').value
         self.depth_center_fraction = self.get_parameter('depth_center_fraction').value
         self.wall_follow_kp = self.get_parameter('wall_follow_kp').value
@@ -180,13 +197,15 @@ class NavigationFSMNode(Node):
         )
         self.state_pub = self.create_publisher(String, '/fsm_state', 10)
         self.evt_pub = self.create_publisher(String, '/qr_event', 10)
-        self.vel_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
+        vel_msg_type = TwistStamped if self.cmd_vel_stamped else Twist
+        self.vel_pub = self.create_publisher(vel_msg_type, cmd_vel_topic, 10)
 
         self.create_timer(0.05, self._control_loop)
 
         self.get_logger().info(
             f'Navigation FSM ready. Initial state: {self._state}. '
-            f'cmd_vel -> {cmd_vel_topic}, scan -> {scan_topic}, '
+            f'cmd_vel -> {cmd_vel_topic} ({vel_msg_type.__name__}), '
+            f'scan -> {scan_topic}, '
             f'IMU turns: {self.use_imu_for_turns}'
         )
 
@@ -460,6 +479,17 @@ class NavigationFSMNode(Node):
         evt.data = f'{time.time():.3f},{event_type},{value}'
         self.evt_pub.publish(evt)
 
+    def _publish_velocity(self, twist: Twist):
+        if not self.cmd_vel_stamped:
+            self.vel_pub.publish(twist)
+            return
+
+        msg = TwistStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = str(self.cmd_vel_frame_id)
+        msg.twist = twist
+        self.vel_pub.publish(msg)
+
     def _control_loop(self):
         now = time.monotonic()
         twist = Twist()
@@ -479,7 +509,7 @@ class NavigationFSMNode(Node):
             self.get_logger().info('ToF clear – resuming normal operation.')
 
         if self._tof_emergency_active:
-            self.vel_pub.publish(Twist())  # hard stop, bypass all FSM logic
+            self._publish_velocity(Twist())  # hard stop, bypass all FSM logic
             return
 
         # ── Normal FSM ────────────────────────────────────────────────────
@@ -514,7 +544,7 @@ class NavigationFSMNode(Node):
         elif self._state == AVOIDING:
             twist = self._avoidance_twist(now)
 
-        self.vel_pub.publish(twist)
+        self._publish_velocity(twist)
 
 
 def main(args=None):

@@ -18,6 +18,7 @@ def generate_launch_description():
 
     args = [
         DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel'),
+        DeclareLaunchArgument('cmd_vel_stamped', default_value='true'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
         DeclareLaunchArgument('start_state', default_value='STOPPED'),
         DeclareLaunchArgument('stop_after_sec', default_value='35.0'),
@@ -49,6 +50,7 @@ def generate_launch_description():
             config,
             {
                 'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
+                'cmd_vel_stamped': LaunchConfiguration('cmd_vel_stamped'),
                 'scan_topic': LaunchConfiguration('scan_topic'),
                 'start_state': LaunchConfiguration('start_state'),
             },
@@ -75,6 +77,7 @@ def generate_launch_description():
             {
                 'script': LaunchConfiguration('script'),
                 'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
+                'cmd_vel_stamped': LaunchConfiguration('cmd_vel_stamped'),
                 'scan_topic': LaunchConfiguration('scan_topic'),
                 'stop_after_sec': LaunchConfiguration('stop_after_sec'),
                 'obstacle_start_sec': LaunchConfiguration('obstacle_start_sec'),

@@ -9,7 +9,7 @@ import math
 import time
 
 import rclpy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
@@ -27,6 +27,14 @@ DEFAULT_SCRIPT = (
 )
 
 
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
+
 class SimulationDriverNode(Node):
 
     def __init__(self):
@@ -34,6 +42,7 @@ class SimulationDriverNode(Node):
 
         self.declare_parameter('script', DEFAULT_SCRIPT)
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
+        self.declare_parameter('cmd_vel_stamped', True)
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('stop_after_sec', 35.0)
         self.declare_parameter('print_cmd_vel_hz', 2.0)
@@ -48,6 +57,7 @@ class SimulationDriverNode(Node):
         print_hz = float(self.get_parameter('print_cmd_vel_hz').value)
         self._obstacle_start_sec = float(self.get_parameter('obstacle_start_sec').value)
         self._obstacle_end_sec = float(self.get_parameter('obstacle_end_sec').value)
+        self._cmd_vel_stamped = _as_bool(self.get_parameter('cmd_vel_stamped').value)
         self._fake_obstacle_distance = float(
             self.get_parameter('fake_obstacle_distance').value
         )
@@ -61,14 +71,16 @@ class SimulationDriverNode(Node):
         self._scan_pub = self.create_publisher(LaserScan, scan_topic, 10)
         self.create_subscription(String, '/fsm_state', self._on_state, 10)
         self.create_subscription(String, '/qr_event', self._on_event, 10)
-        self.create_subscription(Twist, cmd_vel_topic, self._on_twist, 10)
+        vel_msg_type = TwistStamped if self._cmd_vel_stamped else Twist
+        self.create_subscription(vel_msg_type, cmd_vel_topic, self._on_cmd_vel, 10)
 
         self.create_timer(0.05, self._tick)
 
         pretty_script = ', '.join(f'{delay:.1f}s:{cmd}' for delay, cmd in self._events)
         self.get_logger().info(f'Simulation script: {pretty_script}')
         self.get_logger().info(
-            f'Watching velocity topic: {cmd_vel_topic}; publishing fake scan: {scan_topic}'
+            f'Watching velocity topic: {cmd_vel_topic} ({vel_msg_type.__name__}); '
+            f'publishing fake scan: {scan_topic}'
         )
 
     @staticmethod
@@ -132,14 +144,15 @@ class SimulationDriverNode(Node):
     def _on_event(self, msg: String):
         self.get_logger().info(f'EVENT <- {msg.data}')
 
-    def _on_twist(self, msg: Twist):
+    def _on_cmd_vel(self, msg):
         now = time.monotonic()
         if now - self._last_twist_print < self._twist_print_period:
             return
 
         self._last_twist_print = now
+        twist = msg.twist if hasattr(msg, 'twist') else msg
         self.get_logger().info(
-            f'CMD_VEL <- linear.x={msg.linear.x:.2f}, angular.z={msg.angular.z:.2f}'
+            f'CMD_VEL <- linear.x={twist.linear.x:.2f}, angular.z={twist.angular.z:.2f}'
         )
 
 

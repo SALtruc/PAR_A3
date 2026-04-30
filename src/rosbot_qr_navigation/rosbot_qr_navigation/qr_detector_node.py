@@ -56,7 +56,7 @@ class QRDetectorNode(Node):
     def __init__(self):
         super().__init__('qr_detector')
 
-        self.declare_parameter('image_topic', '/camera/color/image_raw')
+        self.declare_parameter('image_topic', '/oak/rgb/image_raw')
         self.declare_parameter('show_debug', False)
         self.declare_parameter('min_qr_area', 800)        # px² – ignore tiny detections
         self.declare_parameter('debounce_sec', DEBOUNCE_SEC)

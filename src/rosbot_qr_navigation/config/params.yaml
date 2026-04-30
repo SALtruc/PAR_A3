@@ -3,7 +3,7 @@
 
 qr_detector:
   ros__parameters:
-    image_topic: /camera/color/image_raw   # OAK-D Pro RGB topic on ROSbot
+    image_topic: /oak/rgb/image_raw        # OAK-D Pro RGB topic on ROSbot
     show_debug: false                       # set true to open OpenCV preview window
     min_qr_area: 800                        # px²; ignore QR detections smaller than this
     debounce_sec: 2.0                       # suppress re-publishing same command (seconds)
@@ -15,6 +15,8 @@ command_interpreter:
 navigation_fsm:
   ros__parameters:
     cmd_vel_topic: /cmd_vel
+    cmd_vel_stamped: true                  # ROSbot snap expects geometry_msgs/TwistStamped
+    cmd_vel_frame_id: base_link
     start_state: DRIVING                   # DRIVING | STOPPED
     cruise_speed:  0.20                    # m/s  – normal forward speed
     slow_speed:    0.10                    # m/s  – RECOVERING state speed

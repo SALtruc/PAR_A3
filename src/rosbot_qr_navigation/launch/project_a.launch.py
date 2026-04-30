@@ -4,8 +4,9 @@ Launch file – Project A: QR Code Command Navigation
 Starts all four nodes with parameters loaded from config/params.yaml.
 
 Overridable from CLI:
-    image_topic     – camera image (default: /camera/color/image_raw)
+    image_topic     – camera image (default: /oak/rgb/image_raw)
     cmd_vel_topic   – velocity output (default: /cmd_vel)
+    cmd_vel_stamped – publish geometry_msgs/TwistStamped (default: true)
     scan_topic      – LaserScan input for obstacle avoidance (default: /scan)
     show_debug      – show OpenCV window (default: false)
     start_state     – initial FSM state (default: DRIVING)
@@ -35,8 +36,10 @@ def generate_launch_description():
 
     # ── Declare overridable arguments ─────────────────────────────────
     args = [
-        DeclareLaunchArgument('image_topic',   default_value='/camera/color/image_raw'),
+        DeclareLaunchArgument('image_topic',   default_value='/oak/rgb/image_raw'),
         DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel'),
+        DeclareLaunchArgument('cmd_vel_stamped', default_value='true'),
+        DeclareLaunchArgument('cmd_vel_frame_id', default_value='base_link'),
         DeclareLaunchArgument('scan_topic',    default_value='/scan'),
         DeclareLaunchArgument('show_debug',    default_value='false'),
         DeclareLaunchArgument('start_state',   default_value='DRIVING'),
@@ -77,12 +80,14 @@ def generate_launch_description():
         parameters=[
             config,
             {
-                'cmd_vel_topic':    LaunchConfiguration('cmd_vel_topic'),
-                'scan_topic':       LaunchConfiguration('scan_topic'),
-                'start_state':      LaunchConfiguration('start_state'),
-                'imu_topic':        LaunchConfiguration('imu_topic'),
-                'tof_topic':        LaunchConfiguration('tof_topic'),
-                'depth_topic':      LaunchConfiguration('depth_topic'),
+                'cmd_vel_topic':     LaunchConfiguration('cmd_vel_topic'),
+                'cmd_vel_stamped':   LaunchConfiguration('cmd_vel_stamped'),
+                'cmd_vel_frame_id':  LaunchConfiguration('cmd_vel_frame_id'),
+                'scan_topic':        LaunchConfiguration('scan_topic'),
+                'start_state':       LaunchConfiguration('start_state'),
+                'imu_topic':         LaunchConfiguration('imu_topic'),
+                'tof_topic':         LaunchConfiguration('tof_topic'),
+                'depth_topic':       LaunchConfiguration('depth_topic'),
                 'use_imu_for_turns': LaunchConfiguration('use_imu_for_turns'),
             },
         ],

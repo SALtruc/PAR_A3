@@ -20,7 +20,8 @@ src/rosbot_qr_navigation/
 ├── package.xml
 └── setup.py
 tools/
-└── generate_qr_codes.py           # prints QR PNGs for all commands
+├── generate_qr_codes.py           # prints QR PNGs for all commands
+└── rosbot_snap_bringup.sh         # starts ROSbot snaps and checks topics
 ```
 
 ## Supported Commands
@@ -163,7 +164,26 @@ Optional: add sourcing to `.bashrc` so new terminals know about the package:
 echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
 ```
 
-### 5. Check robot topics
+### 5. Start robot snap services
+
+On the robot, restart the ROSbot services before launching:
+
+```bash
+cd ~/ros2_ws/src/rosbot_qr_navigation_project
+bash tools/rosbot_snap_bringup.sh
+```
+
+The script runs:
+
+```bash
+sudo snap start rosbot
+sudo snap restart husarion-depthai
+sudo snap restart husarion-webui
+```
+
+It also prints `/cmd_vel`, `/scan`, and `/oak/rgb/image_raw` status.
+
+### 6. Check robot topics
 
 Before running autonomous motion, check the real topic names:
 
@@ -175,9 +195,13 @@ Common expected topics:
 
 | Purpose | Expected topic | How to check |
 |---|---|---|
-| Camera image | `/camera/color/image_raw` | `ros2 topic echo --once /camera/color/image_raw/header` |
+| Camera image | `/oak/rgb/image_raw` | `ros2 topic echo --once /oak/rgb/image_raw/header` |
 | Velocity command | `/cmd_vel` | `ros2 topic info /cmd_vel` |
 | Laser scan | `/scan` | `ros2 topic echo --once /scan/header` |
+
+By default this package publishes `/cmd_vel` as `geometry_msgs/msg/TwistStamped`,
+which matches the current ROSbot snap stack. If your robot reports
+`geometry_msgs/msg/Twist` instead, launch with `cmd_vel_stamped:=false`.
 
 If your robot uses different names, pass them into the launch file:
 
@@ -188,7 +212,7 @@ ros2 launch rosbot_qr_navigation project_a.launch.py \
   scan_topic:=<scan-topic>
 ```
 
-### 6. Run a safe dry test first
+### 7. Run a safe dry test first
 
 Use a dummy velocity topic so the robot will not move yet:
 
@@ -210,15 +234,16 @@ ros2 topic echo /dummy_cmd_vel
 Show QR codes to the camera. If detections appear and `/dummy_cmd_vel` changes,
 the perception-to-action pipeline is working.
 
-### 7. Run on the real robot
+### 8. Run on the real robot
 
 Clear the area, lift the robot wheels or keep an emergency stop ready for the
 first run, then launch with the real velocity topic:
 
 ```bash
 ros2 launch rosbot_qr_navigation project_a.launch.py \
-  image_topic:=/camera/color/image_raw \
+  image_topic:=/oak/rgb/image_raw \
   cmd_vel_topic:=/cmd_vel \
+  cmd_vel_stamped:=true \
   scan_topic:=/scan \
   start_state:=STOPPED
 ```
@@ -227,7 +252,7 @@ Use a `GO` QR code to start. Immediate commands such as `STOP` interrupt the
 current action. Queued commands such as `AND_TURN_LEFT` are added to the wait
 list and run after the current turn or avoidance action completes.
 
-### 8. Collect logs for the report
+### 9. Collect logs for the report
 
 CSV logs are written on the robot:
 
@@ -244,7 +269,7 @@ scp husarion@<robot-ip>:~/rosbot_qr_logs/*.csv ./rosbot_qr_logs/
 Use these logs for detection accuracy, command execution accuracy, and failure
 analysis.
 
-### 9. Common issues
+### 10. Common issues
 
 If SSH fails, check that the laptop and robot are on the same network and that
 `ping <robot-ip>` works.
@@ -263,12 +288,16 @@ ros2 launch rosbot_qr_navigation project_a.launch.py show_debug:=true
 ```
 
 If the robot does not move, confirm the motor controller listens to the same
-velocity topic:
+velocity topic and message type:
 
 ```bash
 ros2 topic info /cmd_vel
 ros2 topic echo /cmd_vel
 ```
+
+If `/cmd_vel` reports `geometry_msgs/msg/Twist`, add `cmd_vel_stamped:=false` to
+the launch command. If it reports `geometry_msgs/msg/TwistStamped`, keep the
+default `cmd_vel_stamped:=true`.
 
 If obstacle avoidance never triggers, confirm `/scan` is publishing and tune
 `obstacle_distance` in `config/params.yaml`.
@@ -330,6 +359,7 @@ Key values to calibrate on the real robot:
 | `recovery_sec` | 10.0 s   | Seconds without QR before RECOVERING |
 | `obstacle_distance` | 0.45 m | `GO` starts avoidance if `/scan` sees an obstacle closer than this |
 | `avoid_forward_sec` | 1.5 s | Timed side-step forward during obstacle avoidance |
+| `cmd_vel_stamped` | true | Publish `geometry_msgs/msg/TwistStamped` instead of `Twist` |
 
 ## Topics
 
@@ -339,7 +369,7 @@ Key values to calibrate on the real robot:
 | `/qr_command`  | `std_msgs/String` | Priority-resolved command to FSM |
 | `/qr_event`    | `std_msgs/String` | Timestamped events for logger |
 | `/fsm_state`   | `std_msgs/String` | Current FSM state |
-| `/cmd_vel`     | `geometry_msgs/Twist` | Velocity commands to ROSbot |
+| `/cmd_vel`     | `geometry_msgs/msg/TwistStamped` | Velocity commands to ROSbot |
 | `/scan`        | `sensor_msgs/LaserScan` | Obstacle input used by `GO` avoidance |
 
 ## Event Logs
@@ -360,8 +390,9 @@ The default `turn_90_sec = π / 0.5 rad/s ≈ 3.14 s` assumes the angular veloci
 in `params.yaml` matches the actual robot rotation. On the real ROSbot, run:
 
 ```bash
-ros2 topic pub /cmd_vel geometry_msgs/Twist \
-    "{linear: {x: 0.0}, angular: {z: 0.5}}" --rate 10
+ros2 topic pub /cmd_vel geometry_msgs/msg/TwistStamped \
+    "{header: {frame_id: base_link}, twist: {linear: {x: 0.0}, angular: {z: 0.5}}}" \
+    --rate 10
 ```
 
 Time how long it takes to complete exactly 90°, then set `turn_90_sec` accordingly.
