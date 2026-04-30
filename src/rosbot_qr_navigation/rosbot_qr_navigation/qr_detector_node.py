@@ -2,12 +2,12 @@
 QR Detector Node
 ----------------
 Subscribes to a camera image topic, decodes QR codes using OpenCV's built-in
-QRCodeDetectorAruco (primary) with a ZBar fallback, and publishes each unique
+QRCodeDetector (primary) with a ZXing fallback, and publishes each unique
 decoded command string on /qr_detected.
 
 Edge-case handling:
   - Multiple QR codes in one frame: publishes all, tagged with bbox centre.
-  - Partial / degraded codes: OpenCV detector is tried first; on failure ZBar
+  - Partial / degraded codes: OpenCV detector is tried first; on failure ZXing
     is attempted if available; otherwise the frame is skipped silently.
   - Oblique angles: when OpenCV finds corners but fails to decode (empty text),
     a perspective warp rectifies the quad to a canonical square and retries.
@@ -51,6 +51,14 @@ VALID_COMMANDS = BASE_COMMANDS | QUEUED_COMMANDS
 DEBOUNCE_SEC = 2.0  # suppress re-publishing the same command within this window
 
 
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
+
 class QRDetectorNode(Node):
 
     def __init__(self):
@@ -62,7 +70,7 @@ class QRDetectorNode(Node):
         self.declare_parameter('debounce_sec', DEBOUNCE_SEC)
 
         image_topic = self.get_parameter('image_topic').value
-        self.show_debug = self.get_parameter('show_debug').value
+        self.show_debug = _as_bool(self.get_parameter('show_debug').value)
         self.min_area = self.get_parameter('min_qr_area').value
         self.debounce_sec = self.get_parameter('debounce_sec').value
 
@@ -166,10 +174,39 @@ class QRDetectorNode(Node):
             dst = np.array([[0, 0], [s, 0], [s, s], [0, s]], dtype=np.float32)
             M = cv2.getPerspectiveTransform(src, dst)
             warped = cv2.warpPerspective(frame, M, (s, s))
-            text, _, _ = self.cv_qr.detectAndDecode(warped)
-            return text.strip().upper() if text else ''
+            return self._decode_opencv_variants(warped)
         except Exception:
             return ''
+
+    def _decode_opencv_variants(self, image: np.ndarray) -> str:
+        """Retry OpenCV QR decoding on contrast-normalized variants."""
+        variants = [image]
+        try:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+            variants.append(gray)
+            variants.append(cv2.equalizeHist(gray))
+            variants.append(
+                cv2.adaptiveThreshold(
+                    gray,
+                    255,
+                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY,
+                    31,
+                    2,
+                )
+            )
+        except Exception:
+            pass
+
+        for candidate in variants:
+            try:
+                text, _, _ = self.cv_qr.detectAndDecode(candidate)
+            except Exception:
+                continue
+            cmd = text.strip().upper() if text else ''
+            if cmd in VALID_COMMANDS:
+                return cmd
+        return ''
 
     @staticmethod
     def _estimate_skew_deg(pts: np.ndarray) -> float:
@@ -183,11 +220,31 @@ class QRDetectorNode(Node):
         import zxingcpp
         results = []
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        found = zxingcpp.read_barcodes(gray)
-        for r in found:
-            cmd = r.text.strip().upper()
-            if cmd in VALID_COMMANDS:
-                results.append(cmd)
+        variants = [gray]
+        try:
+            variants.append(cv2.equalizeHist(gray))
+            variants.append(
+                cv2.adaptiveThreshold(
+                    gray,
+                    255,
+                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY,
+                    31,
+                    2,
+                )
+            )
+        except Exception:
+            pass
+
+        for candidate in variants:
+            try:
+                found = zxingcpp.read_barcodes(candidate)
+            except Exception:
+                continue
+            for r in found:
+                cmd = r.text.strip().upper()
+                if cmd in VALID_COMMANDS and cmd not in results:
+                    results.append(cmd)
         return results
 
     @staticmethod

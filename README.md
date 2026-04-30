@@ -9,16 +9,25 @@ mounted in the environment and executes the encoded navigation commands in real 
 ## Package Layout
 
 ```
-src/rosbot_qr_navigation/
-├── rosbot_qr_navigation/
-│   ├── qr_detector_node.py        # OAK-D Pro → /qr_detected
-│   ├── command_interpreter_node.py # priority + dedup → /qr_command
-│   ├── navigation_fsm_node.py      # FSM (DRIVING/TURNING/STOPPED/RECOVERING) → /cmd_vel
-│   └── event_logger_node.py        # CSV log writer
-├── launch/project_a.launch.py
-├── config/params.yaml
-├── package.xml
-└── setup.py
+src/
+├── rosbot_qr_navigation/          # Project A + obstacle avoidance add-on
+│   ├── rosbot_qr_navigation/
+│   │   ├── qr_detector_node.py
+│   │   ├── command_interpreter_node.py
+│   │   ├── navigation_fsm_node.py
+│   │   └── event_logger_node.py
+│   ├── launch/project_a.launch.py
+│   └── config/params.yaml
+├── rosbot_traffic_light/          # Project B traffic light behaviour
+│   ├── rosbot_traffic_light/
+│   │   └── traffic_light_detector_node.py
+│   ├── launch/project_b.launch.py
+│   └── config/params.yaml
+└── rosbot_obstacle_avoidance/     # Project C obstacle avoidance
+    ├── rosbot_obstacle_avoidance/
+    │   └── obstacle_avoidance_node.py
+    ├── launch/project_c.launch.py
+    └── config/params.yaml
 tools/
 ├── generate_qr_codes.py           # prints QR PNGs for all commands
 └── rosbot_snap_bringup.sh         # starts ROSbot snaps and checks topics
@@ -28,18 +37,28 @@ tools/
 
 | QR Code Content | Robot Behaviour |
 |---|---|
-| `TURN_LEFT`  | 90° left turn  |
-| `TURN_RIGHT` | 90° right turn |
+| `TURN_LEFT`  | 90° left turn, then stop |
+| `TURN_RIGHT` | 90° right turn, then stop |
 | `STOP`       | Halt and wait for GO |
 | `GO`         | Resume driving |
 | `SPEED_UP`   | +0.05 m/s cruising speed |
 | `SPEED_DOWN` | −0.05 m/s cruising speed |
-| `U_TURN`     | 180° turn |
+| `U_TURN`     | 180° turn, then stop |
 
 Any command can be prefixed with `AND_` to queue it instead of interrupting the
 current action. Example: `AND_TURN_LEFT`, `AND_U_TURN`, `AND_SPEED_UP`.
 Immediate commands still interrupt whatever is running; queued commands run FIFO
 after the current turn/avoidance action finishes.
+
+With `stop_after_turn: true`, `GO` received during a turn waits until the turn
+finishes. The FSM publishes a stop command first, then resumes driving on the
+next control tick.
+
+The FSM also includes a Project C-style obstacle avoidance add-on. While driving,
+front obstacles detected by LIDAR or the depth camera automatically trigger a
+side-step routine: the robot chooses the clearer side from LIDAR sectors, turns
+away, drives around the obstacle, turns back, checks the front path again, and
+continues driving when clear.
 
 Supported queued QR contents are:
 
@@ -76,6 +95,12 @@ ros2 launch rosbot_qr_navigation project_a.launch.py
 
 Use this when you want to run the QR navigation package on the real ROSbot
 instead of the local simulator.
+
+For the live-demo rubric scenarios, use:
+
+- `docs/project_a_demo_checklist.md`
+- `docs/project_b_demo_checklist.md`
+- `docs/project_c_demo_checklist.md`
 
 ### 1. Connect your laptop and robot
 
@@ -300,7 +325,9 @@ the launch command. If it reports `geometry_msgs/msg/TwistStamped`, keep the
 default `cmd_vel_stamped:=true`.
 
 If obstacle avoidance never triggers, confirm `/scan` is publishing and tune
-`obstacle_distance` in `config/params.yaml`.
+`obstacle_distance` in `config/params.yaml`. If it avoids too early, reduce
+`obstacle_distance` or `depth_obstacle_dist`; if it gets too close, increase
+them slightly.
 
 ### Test without a robot (webcam)
 
@@ -333,9 +360,19 @@ ros2 launch rosbot_qr_navigation sim_test.launch.py \
     stop_after_sec:=12.0
 ```
 
-To test the obstacle branch of `GO`, the sim launch publishes a fake `/scan`.
-By default an obstacle exists from 0.5s to 2.5s, so the first `GO` should enter
-`AVOIDING` before returning to `DRIVING`.
+To test obstacle avoidance, the sim launch publishes a fake `/scan`. By default
+an obstacle exists from 0.5s to 2.5s, so the first `GO` should enter `AVOIDING`
+before returning to `DRIVING`.
+
+To test the continuous-while-driving branch, move the fake obstacle later:
+
+```bash
+ros2 launch rosbot_qr_navigation sim_test.launch.py \
+    script:="1.0:GO" \
+    obstacle_start_sec:=4.0 \
+    obstacle_end_sec:=7.0 \
+    stop_after_sec:=14.0
+```
 
 ### Generate printable QR codes
 
@@ -355,10 +392,16 @@ Key values to calibrate on the real robot:
 | `cruise_speed` | 0.20 m/s | Forward driving speed |
 | `turn_90_sec`  | 3.14 s   | **Calibrate** by timing a 90° turn |
 | `turn_180_sec` | 6.28 s   | **Calibrate** by timing a 180° turn |
+| `stop_after_turn` | true | Stop after a turn command instead of driving forward automatically |
 | `debounce_sec` | 2.0 s    | Suppresses duplicate QR re-triggers |
 | `recovery_sec` | 10.0 s   | Seconds without QR before RECOVERING |
-| `obstacle_distance` | 0.45 m | `GO` starts avoidance if `/scan` sees an obstacle closer than this |
+| `obstacle_distance` | 0.45 m | Driving/GO starts avoidance if `/scan` sees an obstacle closer than this |
 | `avoid_forward_sec` | 1.5 s | Timed side-step forward during obstacle avoidance |
+| `continuous_obstacle_avoidance` | true | Trigger avoidance automatically while driving |
+| `avoid_side_sector_deg` | 70.0° | LIDAR side sector used to choose the clearer avoidance side |
+| `avoid_retry_limit` | 3 | Stop safely after repeated failed avoidance attempts |
+| `sensor_stale_sec` | 1.0 s | Ignore old scan/depth readings and keep ToF emergency active until a fresh clear reading arrives |
+| `depth_obstacle_dist` | 0.50 m | Depth-camera front obstacle threshold |
 | `cmd_vel_stamped` | true | Publish `geometry_msgs/msg/TwistStamped` instead of `Twist` |
 
 ## Topics

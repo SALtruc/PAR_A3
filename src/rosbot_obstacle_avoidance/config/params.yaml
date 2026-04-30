@@ -1,0 +1,30 @@
+# params.yaml - Project C: Obstacle Avoidance
+
+obstacle_avoidance:
+  ros__parameters:
+    scan_topic: /scan
+    tof_topic: /range
+    use_tof: true
+    cmd_vel_topic: /cmd_vel
+    cmd_vel_stamped: true
+    cmd_vel_frame_id: base_link
+    state_topic: /obstacle_avoidance_state
+    control_hz: 20.0
+
+    max_speed: 0.18
+    min_speed: 0.05
+    reverse_speed: 0.08
+    max_angular_speed: 0.65
+    gap_kp: 1.25
+    corridor_kp: 0.45
+
+    emergency_distance: 0.18
+    obstacle_distance: 0.55
+    clear_distance: 0.75
+    front_angle_deg: 30.0
+    side_angle_deg: 70.0
+    gap_angle_limit_deg: 110.0
+    sensor_stale_sec: 1.0
+
+    backup_sec: 0.9
+    turn_out_sec: 1.8

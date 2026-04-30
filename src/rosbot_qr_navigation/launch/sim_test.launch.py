@@ -21,6 +21,8 @@ def generate_launch_description():
         DeclareLaunchArgument('cmd_vel_stamped', default_value='true'),
         DeclareLaunchArgument('scan_topic', default_value='/scan'),
         DeclareLaunchArgument('start_state', default_value='STOPPED'),
+        DeclareLaunchArgument('stop_after_turn', default_value='true'),
+        DeclareLaunchArgument('continuous_obstacle_avoidance', default_value='true'),
         DeclareLaunchArgument('stop_after_sec', default_value='35.0'),
         DeclareLaunchArgument('obstacle_start_sec', default_value='0.5'),
         DeclareLaunchArgument('obstacle_end_sec', default_value='2.5'),
@@ -53,6 +55,10 @@ def generate_launch_description():
                 'cmd_vel_stamped': LaunchConfiguration('cmd_vel_stamped'),
                 'scan_topic': LaunchConfiguration('scan_topic'),
                 'start_state': LaunchConfiguration('start_state'),
+                'stop_after_turn': LaunchConfiguration('stop_after_turn'),
+                'continuous_obstacle_avoidance': LaunchConfiguration(
+                    'continuous_obstacle_avoidance'
+                ),
             },
         ],
         output='screen',

@@ -24,16 +24,21 @@ navigation_fsm:
     max_speed:     0.40                    # m/s  – upper clamp
     min_speed:     0.05                    # m/s  – lower clamp
     turn_speed:    0.50                    # rad/s – angular velocity during turns
+    stop_after_turn: true                  # true = TURN_LEFT/RIGHT/U_TURN stop after rotating
     # Calibrate these on the real ROSbot by timing a 90° turn on a flat surface:
     turn_90_sec:   3.14                    # seconds for a 90° open-loop turn
     turn_180_sec:  6.28                    # seconds for a 180° open-loop turn
     recovery_sec:  10.0                    # enter RECOVERING after this many seconds without QR
     scan_topic: /scan                      # LaserScan topic for obstacle checks
-    obstacle_distance: 0.45                # meters; GO triggers avoidance below this
+    obstacle_distance: 0.45                # meters; front obstacle threshold
     obstacle_front_angle_deg: 30.0         # +/- front cone checked for obstacles
     avoid_turn_sec: 3.14                   # timed 90 degree turn away/back
     avoid_forward_sec: 1.5                 # sidestep duration before turning back
-    avoid_turn_direction: 1.0              # +1 left-first, -1 right-first
+    avoid_turn_direction: 1.0              # fallback only; +1 left-first, -1 right-first
+    continuous_obstacle_avoidance: true    # while DRIVING, auto side-step around obstacles
+    avoid_side_sector_deg: 70.0            # side sector used to choose clearer avoidance side
+    avoid_retry_limit: 3                   # stop safely if the robot cannot clear the obstacle
+    sensor_stale_sec: 1.0                  # ignore stale scan/depth readings after this many seconds
 
     # IMU-assisted turns (Project A improvement)
     imu_topic: /imu/data                  # sensor_msgs/Imu – set to /imu/data on ROSbot

@@ -10,6 +10,8 @@ Overridable from CLI:
     scan_topic      – LaserScan input for obstacle avoidance (default: /scan)
     show_debug      – show OpenCV window (default: false)
     start_state     – initial FSM state (default: DRIVING)
+    stop_after_turn – stop after TURN_LEFT/RIGHT/U_TURN (default: true)
+    continuous_obstacle_avoidance – auto side-step obstacles while driving (default: true)
     log_dir         – CSV log output directory
 
 Example (real ROSbot OAK-D Pro):
@@ -43,6 +45,8 @@ def generate_launch_description():
         DeclareLaunchArgument('scan_topic',    default_value='/scan'),
         DeclareLaunchArgument('show_debug',    default_value='false'),
         DeclareLaunchArgument('start_state',   default_value='DRIVING'),
+        DeclareLaunchArgument('stop_after_turn', default_value='true'),
+        DeclareLaunchArgument('continuous_obstacle_avoidance', default_value='true'),
         DeclareLaunchArgument('log_dir',       default_value='~/rosbot_qr_logs'),
         DeclareLaunchArgument('imu_topic',     default_value='/imu/data'),
         DeclareLaunchArgument('tof_topic',     default_value='/range'),
@@ -85,6 +89,10 @@ def generate_launch_description():
                 'cmd_vel_frame_id':  LaunchConfiguration('cmd_vel_frame_id'),
                 'scan_topic':        LaunchConfiguration('scan_topic'),
                 'start_state':       LaunchConfiguration('start_state'),
+                'stop_after_turn':   LaunchConfiguration('stop_after_turn'),
+                'continuous_obstacle_avoidance': LaunchConfiguration(
+                    'continuous_obstacle_avoidance'
+                ),
                 'imu_topic':         LaunchConfiguration('imu_topic'),
                 'tof_topic':         LaunchConfiguration('tof_topic'),
                 'depth_topic':       LaunchConfiguration('depth_topic'),
