@@ -320,7 +320,7 @@ class ObstacleAvoidanceNode(Node):
             return
 
         # Obstacle at stop distance: try dodge first, fall back to rotate
-        if snapshot.front <= self._obstacle_distance or snapshot.static_obstacle:
+        if snapshot.front <= self._obstacle_distance:
             has_side_room = (
                 snapshot.left > self._dodge_clearance
                 or snapshot.right > self._dodge_clearance
@@ -351,8 +351,8 @@ class ObstacleAvoidanceNode(Node):
         self._transition(DODGE, self._dodge_duration_sec)
 
     def _handle_dodge(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
-        # Success: squeezed through
-        if snapshot.front >= self._clear_distance and snapshot.side_escape is None:
+        # Success: front is clear
+        if snapshot.front >= self._clear_distance:
             self._transition(DRIVE)
             return False
 
@@ -375,7 +375,8 @@ class ObstacleAvoidanceNode(Node):
         self._turn_direction = self._clearer_side(snapshot.left, snapshot.right)
         if snapshot.side_escape is not None:
             self._turn_direction = snapshot.side_escape
-        self._rotation_attempts = 0
+        # Don't reset attempts here — they accumulate across DRIVE/ROTATE cycles
+        # so the robot tries more directions before backing up
         self._transition(ROTATE, self._rotation_90_sec)
 
     def _handle_rotate(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
@@ -390,7 +391,7 @@ class ObstacleAvoidanceNode(Node):
             return True
 
         # 90 degrees done — check if the path ahead is clear
-        if snapshot.front >= self._clear_distance and snapshot.side_escape is None:
+        if snapshot.front >= self._clear_distance:
             self._transition(DRIVE)
             return False
 
@@ -422,6 +423,7 @@ class ObstacleAvoidanceNode(Node):
         return math.isfinite(snapshot.front) and snapshot.front <= self._face_wall_distance
 
     def _start_backup(self, snapshot: Snapshot, now: float):
+        self._rotation_attempts = 0  # fresh start after backing up
         self._transition(BACKUP, self._backup_sec)
 
     def _handle_backup(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
