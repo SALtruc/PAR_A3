@@ -2,13 +2,12 @@
 Project C reactive decision node.
 
 Policy:
-- drive forward when the fused obstacle representation is fresh and safe;
-- slow down in narrow passages and steer toward the larger side clearance;
-- if the front is blocked, rotate toward the clearer side and re-check the front;
-- if a side is dangerously close, rotate away from that side with a locked direction;
-- during one rotation search, keep the same rotation direction to avoid left-right oscillation;
-- after each rotation step, drive only when the front is clear and both sides are safe;
-- if no clear heading is found after max_rotation_attempts, back up and restart;
+- drive forward when the current front path is usable;
+- use raw front distance for safety thresholds, not the body-offset spacing;
+- if a sudden object appears in the 15-30cm band, observe several frames before deciding;
+- if the object persists but there is side room, perform a small forward dodge instead of a full spin;
+- rotate only when the front path is truly blocked or a dead-end is detected;
+- if one side is critically close, back up first instead of continuing to scrape the wall;
 - hard-stop on ToF emergency.
 
 No map, no route, no long-term memory.
@@ -116,13 +115,14 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_distance', 0.20)      # path clear when front >= this
         self.declare_parameter('slow_distance', 0.18)       # slow down approaching this
         # Drive-first policy thresholds
-        self.declare_parameter('observe_distance', 0.25)  # 15-25cm: observe several frames
+        self.declare_parameter('observe_distance', 0.30)  # 15-30cm raw front: observe several frames
         self.declare_parameter('near_stop_distance', 0.15) # <=15cm: stop/backup/check
         self.declare_parameter('observe_frames', 5)
         self.declare_parameter('avoidance_distance', 0.50) # 25-50cm: dodge/steer, no full stop
         self.declare_parameter('max_dodge_angle_deg', 45.0)
         self.declare_parameter('rotation_step_deg', 45.0)
-        self.declare_parameter('side_drive_slow_distance', 0.08)
+        self.declare_parameter('side_drive_slow_distance', 0.10)
+        self.declare_parameter('side_critical_distance', 0.05)  # <=5cm side clearance: stop scraping
         self.declare_parameter('front_body_offset_m', 0.11)
         self.declare_parameter('face_wall_distance', 0.10)  # force backup when <= this
 
@@ -178,6 +178,7 @@ class ObstacleAvoidanceNode(Node):
         self._max_dodge_angle = math.radians(float(self.get_parameter('max_dodge_angle_deg').value))
         self._rotation_step_angle = math.radians(float(self.get_parameter('rotation_step_deg').value))
         self._side_drive_slow_distance = float(self.get_parameter('side_drive_slow_distance').value)
+        self._side_critical_distance = float(self.get_parameter('side_critical_distance').value)
         self._front_body_offset_m = max(
             0.0, float(self.get_parameter('front_body_offset_m').value)
         )
@@ -244,7 +245,7 @@ class ObstacleAvoidanceNode(Node):
             f'battery={battery_topic}, '
             f'stop_dist={self._obstacle_distance*100:.0f}cm '
             f'clear_dist={self._clear_distance*100:.0f}cm '
-            f'rotation_step={math.degrees(self._rotation_step_angle):.0f}deg/{self._rotation_90_sec:.1f}s '
+            f'rotation_step={math.degrees(self._rotation_step_angle):.0f}deg/{self._rotation_90_sec:.1f}s ' f'near={self._near_stop_distance*100:.0f}cm observe={self._observe_distance*100:.0f}cm side_crit={self._side_critical_distance*100:.0f}cm '
             f'debug_decisions={self._debug_decisions}'
         )
 
@@ -348,7 +349,16 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # 2) Dead-end: front + both sides blocked, cannot pass through.
+        # 2) A side clearance of 0-5cm usually means a wheel/body is scraping.
+        # Do not keep driving in this case, even if the front looks open.
+        if self._side_critical(snapshot):
+            self._start_backup(snapshot, now)
+            self._handle_backup(twist, snapshot, now)
+            self._log_decision('side_critical_backup', snapshot)
+            self._publish_velocity(twist)
+            return
+
+        # 3) Dead-end: front + both sides blocked, cannot pass through.
         if self._dead_end_now(snapshot):
             self._start_backup(snapshot, now)
             self._handle_backup(twist, snapshot, now)
@@ -356,7 +366,7 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # 3) Sudden/dynamic object in the 15-25cm band: observe 4-5 frames.
+        # 4) Sudden/dynamic object in the 15-30cm raw-front band: observe 4-5 frames.
         # If it disappears, keep driving. If it persists/closes, avoid.
         if self._should_observe(snapshot):
             self._start_observe(snapshot, now)
@@ -365,7 +375,7 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # 4) Medium obstacle in front: do not full stop. Try small dodge/steer,
+        # 5) Medium obstacle in front: do not full stop. Try small dodge/steer,
         # limited to about 45 degrees. Only rotate if there is no usable gap.
         if self._front_needs_avoid(snapshot):
             if self._can_dodge_forward(snapshot):
@@ -379,7 +389,7 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # 5) Side close but front is usable: do NOT rotate in place. Keep moving
+        # 6) Side close but front is usable: do NOT rotate in place. Keep moving
         # slowly and steer away. This handles corridors/narrow passages.
         if snapshot.side_escape is not None and self._front_is_usable(snapshot):
             self._transition(DRIVE)
@@ -388,7 +398,7 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # 6) Default: drive straight / roam. Front is clear enough for the robot.
+        # 7) Default: drive straight / roam. Front is clear enough for the robot.
         self._transition(DRIVE)
         self._drive_straight(twist, snapshot)
         self._log_decision('drive_first', snapshot)
@@ -404,25 +414,27 @@ class ObstacleAvoidanceNode(Node):
 
     def _handle_observe(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
         self._observe_count += 1
-        self._observe_min_front = min(self._observe_min_front, snapshot.front)
+        front_decision = self._front_decision_distance(snapshot)
+        self._observe_min_front = min(self._observe_min_front, front_decision)
 
-        # If the object vanished / front path became usable, continue driving.
-        if self._front_is_usable(snapshot):
-            self._transition(DRIVE)
-            return False
-
-        # If it became too close during observation, back up immediately.
+        # If it becomes too close during observation, back up immediately.
         if self._too_close(snapshot):
             self._start_backup(snapshot, now)
             return True
 
-        # Collect 4-5 frames. Move very slowly instead of fully stopping.
+        # If the object moved away from the observe band, resume normal driving.
+        if front_decision > self._observe_distance:
+            self._transition(DRIVE)
+            return False
+
+        # Collect several frames. Keep almost stopped, with tiny steering toward free side.
         if self._observe_count < self._observe_frames:
-            twist.linear.x = min(self._min_speed, 0.015)
+            twist.linear.x = 0.0
             twist.angular.z = self._soft_avoid_angular(snapshot)
             return True
 
-        # Persistent obstacle after observation: dodge if possible, otherwise rotate.
+        # Persistent object after observation: dodge if one side is available;
+        # otherwise rotate search. This is where dynamic obstacles become action.
         if self._can_dodge_forward(snapshot):
             self._start_dodge(snapshot, now)
         else:
@@ -436,17 +448,21 @@ class ObstacleAvoidanceNode(Node):
         self._transition(DODGE, self._dodge_duration_sec)
 
     def _handle_dodge(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
-        # Done: front path is now usable for the robot. Side can still be close;
-        # DRIVE will continue steering away while moving forward.
-        if self._front_is_usable(snapshot):
+        front_decision = self._front_decision_distance(snapshot)
+
+        # Too close or side scrape during dodge: back up.
+        if self._too_close(snapshot) or self._side_critical(snapshot):
+            self._start_backup(snapshot, now)
+            return True
+
+        # Finish dodge only after the raw front path is clearly usable,
+        # not just because best_gap says there is a far-off opening.
+        if front_decision >= self._clear_distance:
             self._transition(DRIVE)
             return False
 
-        # Too close or dodge timeout: rotate/backup search.
-        if self._too_close(snapshot):
-            self._start_backup(snapshot, now)
-            return True
         if now >= self._state_end_time:
+            # If still not clear after a short forward dodge, rotate search.
             self._start_rotate(snapshot, now)
             return True
 
@@ -519,40 +535,59 @@ class ObstacleAvoidanceNode(Node):
 
     # ── Policy helper predicates ──────────────────────────────────────────────
 
+    def _front_decision_distance(self, snapshot: Snapshot) -> float:
+        # Use raw fused front distance for safety decisions. The body-offset spacing is
+        # useful for reporting, but it made the robot overreact at startup.
+        if math.isfinite(snapshot.front_raw):
+            return snapshot.front_raw
+        return snapshot.front
+
     def _too_close(self, snapshot: Snapshot) -> bool:
-        return math.isfinite(snapshot.front) and snapshot.front <= self._near_stop_distance
+        front_decision = self._front_decision_distance(snapshot)
+        return math.isfinite(front_decision) and front_decision <= self._near_stop_distance
+
+    def _side_critical(self, snapshot: Snapshot) -> bool:
+        # 0-5cm side clearance means the robot may be scraping/stuck.
+        side_min = min(snapshot.left, snapshot.right)
+        return math.isfinite(side_min) and side_min <= self._side_critical_distance
 
     def _front_is_usable(self, snapshot: Snapshot) -> bool:
-        """True when the robot's current face/front path is wide and clear enough."""
-        if not math.isfinite(snapshot.front):
+        """True when the robot's current face/front path is clear enough to continue."""
+        front_decision = self._front_decision_distance(snapshot)
+        if not math.isfinite(front_decision):
             return True
-        if snapshot.front >= self._clear_distance:
+        if front_decision >= self._clear_distance:
             return True
-        # If perception found a central gap close to heading, treat it as usable.
-        if snapshot.target is not None:
+        # Use best gap only as a secondary signal, and only when the raw front is
+        # not dangerously close. This prevents driving into close objects just
+        # because a far gap exists at an angle.
+        if front_decision > self._observe_distance and snapshot.target is not None:
             return (
-                abs(snapshot.target.angle) <= self._max_dodge_angle
+                abs(snapshot.target.angle) <= math.radians(20)
                 and snapshot.target.clearance >= self._clear_distance
             )
         return False
 
     def _front_needs_avoid(self, snapshot: Snapshot) -> bool:
+        front_decision = self._front_decision_distance(snapshot)
         return (
-            math.isfinite(snapshot.front)
-            and self._observe_distance < snapshot.front < self._avoidance_distance
+            math.isfinite(front_decision)
+            and self._observe_distance < front_decision < self._avoidance_distance
         )
 
     def _should_observe(self, snapshot: Snapshot) -> bool:
-        if not math.isfinite(snapshot.front):
+        front_decision = self._front_decision_distance(snapshot)
+        if not math.isfinite(front_decision):
             return False
-        return self._near_stop_distance < snapshot.front <= self._observe_distance
+        return self._near_stop_distance < front_decision <= self._observe_distance
 
     def _dead_end_now(self, snapshot: Snapshot) -> bool:
-        if snapshot.dead_end:
-            return True
+        # Do not trust the fused dead_end flag alone when the raw front is open;
+        # in earlier tests it marked dead_end even with front > 1m due to side proximity.
+        front_decision = self._front_decision_distance(snapshot)
         return (
-            math.isfinite(snapshot.front)
-            and snapshot.front < self._observe_distance
+            math.isfinite(front_decision)
+            and front_decision < self._observe_distance
             and snapshot.left < self._dodge_clearance
             and snapshot.right < self._dodge_clearance
         )
@@ -561,9 +596,8 @@ class ObstacleAvoidanceNode(Node):
         if self._too_close(snapshot):
             return False
         # Need at least one side with enough clearance to slide around.
-        side_room = max(snapshot.left, snapshot.right)
-        if not math.isfinite(side_room):
-            side_room = self._dodge_clearance
+        finite_sides = [v for v in (snapshot.left, snapshot.right) if math.isfinite(v)]
+        side_room = max(finite_sides) if finite_sides else math.inf
         if side_room < self._dodge_clearance:
             return False
         if snapshot.target is None:

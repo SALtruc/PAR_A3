@@ -16,7 +16,13 @@ import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import Image, LaserScan, PointCloud2, Range
 from std_msgs.msg import String
 
@@ -307,12 +313,22 @@ class ObstaclePerceptionNode(Node):
                 )
                 self._use_pointcloud = False
             else:
+                # /oak/points on this ROSbot publishes PointCloud2 with
+                # RELIABLE + TRANSIENT_LOCAL QoS. qos_profile_sensor_data is
+                # usually BEST_EFFORT + VOLATILE, which can silently prevent
+                # matching and make depth/pointcloud appear off in the fused log.
+                pointcloud_qos = QoSProfile(
+                    reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                    history=HistoryPolicy.KEEP_LAST,
+                    depth=10,
+                )
                 self._subscriptions.append(
                     self.create_subscription(
                         PointCloud2,
                         pointcloud_topic,
                         self._on_pointcloud,
-                        qos_profile_sensor_data,
+                        pointcloud_qos,
                     )
                 )
         if self._use_tof:
