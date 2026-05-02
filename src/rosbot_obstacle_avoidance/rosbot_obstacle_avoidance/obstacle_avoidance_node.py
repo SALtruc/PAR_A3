@@ -125,6 +125,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('dynamic_clear_frames', 2)
         self.declare_parameter('obstacle_stale_sec', 1.0)
         self.declare_parameter('turn_out_sec', 0.90)
+        self.declare_parameter('turn_reversal_sec', 2.5)
         self.declare_parameter('side_balance_distance', 0.45)
         self.declare_parameter('side_protect_distance', 0.12)
         self.declare_parameter('turn_direction_hold_sec', 0.80)
@@ -181,6 +182,7 @@ class ObstacleAvoidanceNode(Node):
         )
         self._obstacle_stale_sec = float(self.get_parameter('obstacle_stale_sec').value)
         self._turn_out_sec = float(self.get_parameter('turn_out_sec').value)
+        self._turn_reversal_sec = float(self.get_parameter('turn_reversal_sec').value)
         self._side_balance_distance = float(
             self.get_parameter('side_balance_distance').value
         )
@@ -211,6 +213,7 @@ class ObstacleAvoidanceNode(Node):
         self._state_end_time = 0.0
         self._turn_direction = 1.0
         self._turn_direction_until = 0.0
+        self._turn_out_start_time: float | None = None
         self._dynamic_seen_frames = 0
         self._dynamic_clear_seen_frames = 0
         self._battery_voltage: float | None = None
@@ -491,6 +494,10 @@ class ObstacleAvoidanceNode(Node):
             return False
 
         if now >= self._state_end_time:
+            if (self._turn_out_start_time is not None
+                    and now - self._turn_out_start_time >= self._turn_reversal_sec):
+                self._turn_direction = -self._turn_direction
+                self._turn_out_start_time = now
             self._state_end_time = now + self._turn_out_sec
 
         twist.angular.z = self._turn_direction * self._max_angular_speed
@@ -499,6 +506,7 @@ class ObstacleAvoidanceNode(Node):
     def _start_deadend_turn(self, snapshot: Snapshot, now: float):
         self._reset_dynamic_check()
         self._set_turn_direction(snapshot, now, force=True)
+        self._turn_out_start_time = now
         self._transition(TURN_OUT, self._turn_out_sec)
 
     def _needs_backup_escape(self, snapshot: Snapshot) -> bool:

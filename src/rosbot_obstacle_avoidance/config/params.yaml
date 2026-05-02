@@ -15,8 +15,8 @@ obstacle_perception:
     publish_hz: 20.0
 
     emergency_distance: 0.18
-    obstacle_distance: 0.45
-    clear_distance: 0.60
+    obstacle_distance: 0.28
+    clear_distance: 0.40
     front_center_angle_deg: 0.0
     front_angle_deg: 40.0
     front_percentile: 15.0
@@ -71,9 +71,10 @@ obstacle_avoidance:
     gap_kp: 0.65
     corridor_kp: 0.14
 
-    obstacle_distance: 0.35
-    clear_distance: 0.50
-    slow_distance: 0.65
+    obstacle_distance: 0.25
+    clear_distance: 0.35
+    slow_distance: 0.45
+    turn_reversal_sec: 2.5
     front_body_offset_m: 0.11
     face_wall_distance: 0.20
     backup_speed: 0.08
