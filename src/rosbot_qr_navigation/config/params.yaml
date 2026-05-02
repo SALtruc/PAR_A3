@@ -30,18 +30,20 @@ navigation_fsm:
     turn_180_sec:  6.28                    # seconds for a 180° open-loop turn
     recovery_sec:  10.0                    # enter RECOVERING after this many seconds without QR
     scan_topic: /scan                      # LaserScan topic for obstacle checks
-    obstacle_distance: 0.35                # meters; front obstacle threshold
-    obstacle_front_angle_deg: 20.0         # +/- front cone checked for obstacles
-    obstacle_confirm_sec: 0.25             # seconds close readings must persist
-    obstacle_min_points: 4                 # minimum close LIDAR rays before avoiding
+    obstacle_distance: 0.30                # meters; front obstacle threshold
+    obstacle_front_angle_deg: 15.0         # +/- front cone checked for obstacles
+    obstacle_confirm_sec: 0.35             # seconds close readings must persist
+    obstacle_min_points: 5                 # minimum close LIDAR rays before avoiding
     obstacle_percentile: 10.0              # robust front distance percentile
+    obstacle_safety_enabled: true          # false = ignore obstacle layer for QR-only demo
     avoid_turn_sec: 3.14                   # timed 90 degree turn away/back
     avoid_forward_sec: 1.5                 # sidestep duration before turning back
     avoid_pass_sec: 1.2                    # forward time after re-aligning past obstacle
     avoid_return_sec: 1.5                  # timed return from side-step to original path
-    avoid_return_to_path: true             # merge back instead of staying on offset path
+    avoid_return_to_path: true             # used only when obstacle_stop_only=false
     avoid_turn_direction: 1.0              # fallback only; +1 left-first, -1 right-first
-    continuous_obstacle_avoidance: true    # while DRIVING, auto side-step around obstacles
+    continuous_obstacle_avoidance: true    # while DRIVING, react to front obstacles
+    obstacle_stop_only: true               # true = stop safely; false = timed side-step avoidance
     avoid_side_sector_deg: 70.0            # side sector used to choose clearer avoidance side
     avoid_retry_limit: 3                   # stop safely if the robot cannot clear the obstacle
     sensor_stale_sec: 1.0                  # ignore stale scan/depth readings after this many seconds

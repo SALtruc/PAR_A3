@@ -59,6 +59,19 @@ if ! command -v ros2 >/dev/null 2>&1; then
   exit 0
 fi
 
+if [ -f "$HOME/ros2_ws/install/setup.bash" ]; then
+  # shellcheck source=/dev/null
+  source "$HOME/ros2_ws/install/setup.bash"
+fi
+
+echo
+echo "[ros] package resolution"
+if ros2 pkg prefix rosbot_qr_navigation >/tmp/rosbot_qr_navigation_prefix.txt 2>/dev/null; then
+  echo "[ok] rosbot_qr_navigation prefix: $(cat /tmp/rosbot_qr_navigation_prefix.txt)"
+else
+  echo "[warn] rosbot_qr_navigation not found in the sourced ROS environment."
+fi
+
 topic_list() {
   if command -v timeout >/dev/null 2>&1; then
     timeout 5 ros2 topic list 2>/dev/null
@@ -85,4 +98,3 @@ check_topic /oak/rgb/image_raw
 echo
 echo "[ros] /cmd_vel info"
 ros2 topic info /cmd_vel 2>/dev/null || echo "[warn] /cmd_vel info unavailable"
-

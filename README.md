@@ -25,7 +25,9 @@ src/
 │   └── config/params.yaml
 └── rosbot_obstacle_avoidance/     # Project C obstacle avoidance
     ├── rosbot_obstacle_avoidance/
-    │   └── obstacle_avoidance_node.py
+    │   ├── obstacle_perception_node.py
+    │   ├── obstacle_avoidance_node.py
+    │   └── obstacle_trial_logger_node.py
     ├── launch/project_c.launch.py
     └── config/params.yaml
 tools/
@@ -54,11 +56,11 @@ Turn commands always finish in `STOPPED`. If `GO` is received during a turn, it
 waits until the turn finishes; the FSM publishes a stop command first, then
 resumes driving on the next control tick.
 
-The FSM also includes a Project C-style obstacle avoidance add-on. While driving,
-front obstacles detected by LIDAR or the depth camera automatically trigger a
-side-step routine: the robot chooses the clearer side from LIDAR sectors, turns
-away, drives around the obstacle, turns back, checks the front path again, and
-continues driving when clear.
+The FSM also includes a Project C-style obstacle safety add-on. By default,
+front obstacles detected by LIDAR or the depth camera stop the robot instead of
+running a blind timed side-step. Timed side-step avoidance can still be enabled
+with `obstacle_stop_only:=false` for controlled tests. For QR-only demos, disable
+the obstacle layer with `obstacle_safety_enabled:=false`.
 
 Supported queued QR contents are:
 
@@ -324,8 +326,8 @@ If `/cmd_vel` reports `geometry_msgs/msg/Twist`, add `cmd_vel_stamped:=false` to
 the launch command. If it reports `geometry_msgs/msg/TwistStamped`, keep the
 default `cmd_vel_stamped:=true`.
 
-If obstacle avoidance never triggers, confirm `/scan` is publishing and tune
-`obstacle_distance` in `config/params.yaml`. If it avoids too early, reduce
+If obstacle safety never triggers, confirm `/scan` is publishing and tune
+`obstacle_distance` in `config/params.yaml`. If it reacts too early, reduce
 `obstacle_distance`, increase `obstacle_confirm_sec` or `obstacle_min_points`,
 or reduce `depth_obstacle_dist`; if it gets too close, increase
 them slightly.
@@ -396,14 +398,16 @@ Key values to calibrate on the real robot:
 | `stop_after_turn` | true | Compatibility option; QR turn commands always stop after rotating |
 | `debounce_sec` | 2.0 s    | Suppresses duplicate QR re-triggers |
 | `recovery_sec` | 10.0 s   | Seconds without QR before RECOVERING |
-| `obstacle_distance` | 0.35 m | Driving/GO starts avoidance if several front `/scan` rays stay closer than this |
-| `obstacle_confirm_sec` | 0.25 s | Close readings must persist before avoidance starts |
-| `obstacle_min_points` | 4 | Minimum close LIDAR rays before avoidance starts |
-| `avoid_forward_sec` | 1.5 s | Timed side-step outward during obstacle avoidance |
+| `obstacle_distance` | 0.30 m | Driving/GO reacts if several front `/scan` rays stay closer than this |
+| `obstacle_confirm_sec` | 0.35 s | Close readings must persist before obstacle safety reacts |
+| `obstacle_min_points` | 5 | Minimum close LIDAR rays before obstacle safety reacts |
+| `obstacle_safety_enabled` | true | Enable LIDAR/depth obstacle safety layer |
+| `obstacle_stop_only` | true | Stop safely instead of running timed side-step avoidance |
+| `avoid_forward_sec` | 1.5 s | Timed side-step outward when `obstacle_stop_only=false` |
 | `avoid_pass_sec` | 1.2 s | Timed forward motion after re-aligning past the obstacle |
 | `avoid_return_sec` | 1.5 s | Timed side-step back toward the original path |
-| `avoid_return_to_path` | true | Merge back after the side-step instead of staying on the offset path |
-| `continuous_obstacle_avoidance` | true | Trigger avoidance automatically while driving |
+| `avoid_return_to_path` | true | Merge back after the side-step when `obstacle_stop_only=false` |
+| `continuous_obstacle_avoidance` | true | React to obstacles automatically while driving |
 | `avoid_side_sector_deg` | 70.0° | LIDAR side sector used to choose the clearer avoidance side |
 | `avoid_retry_limit` | 3 | Stop safely after repeated failed avoidance attempts |
 | `sensor_stale_sec` | 1.0 s | Ignore old scan/depth readings and keep ToF emergency active until a fresh clear reading arrives |

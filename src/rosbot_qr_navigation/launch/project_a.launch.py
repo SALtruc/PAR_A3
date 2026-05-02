@@ -11,7 +11,9 @@ Overridable from CLI:
     show_debug      – show OpenCV window (default: false)
     start_state     – initial FSM state (default: DRIVING)
     stop_after_turn – stop after TURN_LEFT/RIGHT/U_TURN (default: true)
-    continuous_obstacle_avoidance – auto side-step obstacles while driving (default: true)
+    continuous_obstacle_avoidance – react to obstacles while driving (default: true)
+    obstacle_safety_enabled – enable LIDAR/depth obstacle layer (default: true)
+    obstacle_stop_only – stop instead of timed side-step avoidance (default: true)
     log_dir         – CSV log output directory
 
 Example (real ROSbot OAK-D Pro):
@@ -47,10 +49,12 @@ def generate_launch_description():
         DeclareLaunchArgument('start_state',   default_value='DRIVING'),
         DeclareLaunchArgument('stop_after_turn', default_value='true'),
         DeclareLaunchArgument('continuous_obstacle_avoidance', default_value='true'),
-        DeclareLaunchArgument('obstacle_distance', default_value='0.35'),
-        DeclareLaunchArgument('obstacle_front_angle_deg', default_value='20.0'),
-        DeclareLaunchArgument('obstacle_confirm_sec', default_value='0.25'),
-        DeclareLaunchArgument('obstacle_min_points', default_value='4'),
+        DeclareLaunchArgument('obstacle_safety_enabled', default_value='true'),
+        DeclareLaunchArgument('obstacle_stop_only', default_value='true'),
+        DeclareLaunchArgument('obstacle_distance', default_value='0.30'),
+        DeclareLaunchArgument('obstacle_front_angle_deg', default_value='15.0'),
+        DeclareLaunchArgument('obstacle_confirm_sec', default_value='0.35'),
+        DeclareLaunchArgument('obstacle_min_points', default_value='5'),
         DeclareLaunchArgument('obstacle_percentile', default_value='10.0'),
         DeclareLaunchArgument('avoid_turn_sec', default_value='3.14'),
         DeclareLaunchArgument('avoid_forward_sec', default_value='1.5'),
@@ -103,6 +107,10 @@ def generate_launch_description():
                 'continuous_obstacle_avoidance': LaunchConfiguration(
                     'continuous_obstacle_avoidance'
                 ),
+                'obstacle_safety_enabled': LaunchConfiguration(
+                    'obstacle_safety_enabled'
+                ),
+                'obstacle_stop_only': LaunchConfiguration('obstacle_stop_only'),
                 'obstacle_distance': LaunchConfiguration('obstacle_distance'),
                 'obstacle_front_angle_deg': LaunchConfiguration(
                     'obstacle_front_angle_deg'

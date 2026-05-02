@@ -25,7 +25,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'obstacle_perception = rosbot_obstacle_avoidance.obstacle_perception_node:main',
             'obstacle_avoidance = rosbot_obstacle_avoidance.obstacle_avoidance_node:main',
+            'obstacle_trial_logger = rosbot_obstacle_avoidance.obstacle_trial_logger_node:main',
         ],
     },
 )

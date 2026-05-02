@@ -50,11 +50,12 @@ DEFAULT_TURN_90_SEC = (math.pi / 2) / DEFAULT_TURN_SPEED
 DEFAULT_TURN_180_SEC = math.pi / DEFAULT_TURN_SPEED
 DEFAULT_RECOVERY_SEC = 10.0
 
-DEFAULT_OBSTACLE_DISTANCE = 0.35
-DEFAULT_OBSTACLE_FRONT_ANGLE_DEG = 20.0
-DEFAULT_OBSTACLE_CONFIRM_SEC = 0.25
-DEFAULT_OBSTACLE_MIN_POINTS = 4
+DEFAULT_OBSTACLE_DISTANCE = 0.30
+DEFAULT_OBSTACLE_FRONT_ANGLE_DEG = 15.0
+DEFAULT_OBSTACLE_CONFIRM_SEC = 0.35
+DEFAULT_OBSTACLE_MIN_POINTS = 5
 DEFAULT_OBSTACLE_PERCENTILE = 10.0
+DEFAULT_OBSTACLE_SAFETY_ENABLED = True
 DEFAULT_AVOID_TURN_SEC = DEFAULT_TURN_90_SEC
 DEFAULT_AVOID_FORWARD_SEC = 1.5
 DEFAULT_AVOID_PASS_SEC = 1.2
@@ -62,6 +63,7 @@ DEFAULT_AVOID_RETURN_SEC = DEFAULT_AVOID_FORWARD_SEC
 DEFAULT_AVOID_RETURN_TO_PATH = True
 DEFAULT_AVOID_TURN_DIRECTION = 1.0
 DEFAULT_CONTINUOUS_OBSTACLE_AVOIDANCE = True
+DEFAULT_OBSTACLE_STOP_ONLY = True
 DEFAULT_AVOID_SIDE_SECTOR_DEG = 70.0
 DEFAULT_AVOID_RETRY_LIMIT = 3
 DEFAULT_SENSOR_STALE_SEC = 1.0
@@ -131,6 +133,10 @@ class NavigationFSMNode(Node):
         self.declare_parameter('obstacle_confirm_sec', DEFAULT_OBSTACLE_CONFIRM_SEC)
         self.declare_parameter('obstacle_min_points', DEFAULT_OBSTACLE_MIN_POINTS)
         self.declare_parameter('obstacle_percentile', DEFAULT_OBSTACLE_PERCENTILE)
+        self.declare_parameter(
+            'obstacle_safety_enabled',
+            DEFAULT_OBSTACLE_SAFETY_ENABLED,
+        )
         self.declare_parameter('avoid_turn_sec', DEFAULT_AVOID_TURN_SEC)
         self.declare_parameter('avoid_forward_sec', DEFAULT_AVOID_FORWARD_SEC)
         self.declare_parameter('avoid_pass_sec', DEFAULT_AVOID_PASS_SEC)
@@ -141,6 +147,7 @@ class NavigationFSMNode(Node):
             'continuous_obstacle_avoidance',
             DEFAULT_CONTINUOUS_OBSTACLE_AVOIDANCE,
         )
+        self.declare_parameter('obstacle_stop_only', DEFAULT_OBSTACLE_STOP_ONLY)
         self.declare_parameter('avoid_side_sector_deg', DEFAULT_AVOID_SIDE_SECTOR_DEG)
         self.declare_parameter('avoid_retry_limit', DEFAULT_AVOID_RETRY_LIMIT)
         self.declare_parameter('sensor_stale_sec', DEFAULT_SENSOR_STALE_SEC)
@@ -187,6 +194,9 @@ class NavigationFSMNode(Node):
             0.0,
             min(100.0, _as_float(self.get_parameter('obstacle_percentile').value)),
         )
+        self.obstacle_safety_enabled = _as_bool(
+            self.get_parameter('obstacle_safety_enabled').value
+        )
         self.avoid_turn_sec = _as_float(self.get_parameter('avoid_turn_sec').value)
         self.avoid_forward_sec = _as_float(
             self.get_parameter('avoid_forward_sec').value
@@ -203,6 +213,9 @@ class NavigationFSMNode(Node):
         )
         self.continuous_obstacle_avoidance = _as_bool(
             self.get_parameter('continuous_obstacle_avoidance').value
+        )
+        self.obstacle_stop_only = _as_bool(
+            self.get_parameter('obstacle_stop_only').value
         )
         self.avoid_side_sector_rad = math.radians(
             _as_float(self.get_parameter('avoid_side_sector_deg').value)
@@ -290,7 +303,9 @@ class NavigationFSMNode(Node):
             f'cmd_vel -> {cmd_vel_topic} ({vel_msg_type.__name__}), '
             f'scan -> {scan_topic}, '
             f'IMU turns: {self.use_imu_for_turns}, '
-            'QR turns finish in STOPPED'
+            'QR turns finish in STOPPED, '
+            f'obstacle safety: {self.obstacle_safety_enabled}, '
+            f'obstacle response: {"STOP" if self.obstacle_stop_only else "AVOID"}'
         )
 
     def _on_command(self, msg: String):
@@ -333,7 +348,7 @@ class NavigationFSMNode(Node):
                 return
 
             if self._front_obstacle_detected():
-                self._start_avoidance(reason='GO')
+                self._handle_obstacle(reason='GO')
             elif self._state in (STOPPED, RECOVERING, TURNING, AVOIDING):
                 self._transition(DRIVING)
 
@@ -473,6 +488,11 @@ class NavigationFSMNode(Node):
 
     def _front_obstacle_detected(self, log: bool = True) -> bool:
         """Fuse LIDAR + depth camera for front-obstacle check (Project C sensor fusion)."""
+        if not self.obstacle_safety_enabled:
+            self._obstacle_first_seen_time = None
+            self._obstacle_confirmed = False
+            return False
+
         lidar_dist, lidar_close_points = self._lidar_front_distance()
         depth_dist = (
             self._depth_front_dist
@@ -511,8 +531,13 @@ class NavigationFSMNode(Node):
             if blocked_depth:
                 source.append(f'depth={depth_dist:.2f}m')
             if log and not self._obstacle_confirmed:
+                action = (
+                    'Stopping.'
+                    if self.obstacle_stop_only
+                    else 'Starting avoidance.'
+                )
                 self.get_logger().warn(
-                    f'Obstacle detected [{", ".join(source)}]. Starting avoidance.'
+                    f'Obstacle detected [{", ".join(source)}]. {action}'
                 )
             self._obstacle_confirmed = True
             return True
@@ -596,6 +621,16 @@ class NavigationFSMNode(Node):
         if not math.isfinite(right_clearance):
             return 1.0
         return 1.0 if left_clearance >= right_clearance else -1.0
+
+    def _handle_obstacle(self, reason: str):
+        if self.obstacle_stop_only:
+            self._avoid_steps.clear()
+            self._avoid_retry_count = 0
+            self._publish_event('AVOID', f'stopped_{reason}')
+            self._transition(STOPPED)
+            return
+
+        self._start_avoidance(reason=reason)
 
     def _start_avoidance(self, reason: str = 'front_obstacle', retry: bool = False):
         if not retry:
@@ -728,7 +763,7 @@ class NavigationFSMNode(Node):
                 if (
                         self.continuous_obstacle_avoidance
                         and self._front_obstacle_detected()):
-                    self._start_avoidance(reason='driving')
+                    self._handle_obstacle(reason='driving')
                 else:
                     twist.linear.x = self._current_speed
 
