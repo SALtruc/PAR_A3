@@ -71,7 +71,9 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_center_fraction', 0.33)
         self.declare_parameter('depth_side_fraction', 0.30)
         self.declare_parameter('dynamic_obstacle_distance', 1.0)
-        self.declare_parameter('dynamic_closing_speed', 0.25)
+        self.declare_parameter('dynamic_closing_speed', 0.80)
+        self.declare_parameter('dynamic_confirm_sec', 0.20)
+        self.declare_parameter('front_filter_alpha', 0.35)
 
         scan_topic = self.get_parameter('scan_topic').value
         depth_topic = self.get_parameter('depth_topic').value
@@ -116,6 +118,12 @@ class ObstaclePerceptionNode(Node):
         self._dynamic_closing_speed = float(
             self.get_parameter('dynamic_closing_speed').value
         )
+        self._dynamic_confirm_sec = float(
+            self.get_parameter('dynamic_confirm_sec').value
+        )
+        self._front_filter_alpha = float(
+            self.get_parameter('front_filter_alpha').value
+        )
 
         self._latest_scan: LaserScan | None = None
         self._last_scan_time: float | None = None
@@ -126,6 +134,8 @@ class ObstaclePerceptionNode(Node):
         self._tof_range = math.inf
         self._last_tof_time: float | None = None
         self._prev_front_sample: tuple[float, float] | None = None
+        self._filtered_front_distance: float | None = None
+        self._dynamic_first_seen_time: float | None = None
         self._bridge = CvBridge()
 
         if self._use_lidar:
@@ -248,6 +258,7 @@ class ObstaclePerceptionNode(Node):
         front_distance = _min_finite(lidar_front, depth_front)
         left_distance = _min_finite(lidar_left, depth_left)
         right_distance = _min_finite(lidar_right, depth_right)
+        rear_distance = lidar_rear
 
         blocked_lidar = lidar_front < self._obstacle_distance
         blocked_depth = depth_front < self._depth_obstacle_distance
@@ -303,6 +314,7 @@ class ObstaclePerceptionNode(Node):
                 'front_distance': _json_float(front_distance),
                 'left_distance': _json_float(left_distance),
                 'right_distance': _json_float(right_distance),
+                'rear_distance': _json_float(rear_distance),
                 'blocked': bool(blocked),
                 'clear': bool(front_distance >= self._clear_distance),
                 'emergency': bool(emergency),
@@ -341,18 +353,38 @@ class ObstaclePerceptionNode(Node):
         closing_speed = 0.0
         dynamic = False
         if math.isfinite(front_distance):
+            if self._filtered_front_distance is None:
+                self._filtered_front_distance = front_distance
+            else:
+                alpha = max(0.0, min(1.0, self._front_filter_alpha))
+                self._filtered_front_distance = (
+                    alpha * front_distance
+                    + (1.0 - alpha) * self._filtered_front_distance
+                )
+
             if self._prev_front_sample is not None:
                 prev_time, prev_dist = self._prev_front_sample
                 dt = now - prev_time
                 if dt > 0.01 and math.isfinite(prev_dist):
-                    closing_speed = (prev_dist - front_distance) / dt
-                    dynamic = (
-                        front_distance < self._dynamic_obstacle_distance
+                    closing_speed = (prev_dist - self._filtered_front_distance) / dt
+                    raw_dynamic = (
+                        self._filtered_front_distance < self._dynamic_obstacle_distance
                         and closing_speed >= self._dynamic_closing_speed
                     )
-            self._prev_front_sample = (now, front_distance)
+                    if raw_dynamic:
+                        if self._dynamic_first_seen_time is None:
+                            self._dynamic_first_seen_time = now
+                        dynamic = (
+                            now - self._dynamic_first_seen_time
+                            >= self._dynamic_confirm_sec
+                        )
+                    else:
+                        self._dynamic_first_seen_time = None
+            self._prev_front_sample = (now, self._filtered_front_distance)
         else:
             self._prev_front_sample = None
+            self._filtered_front_distance = None
+            self._dynamic_first_seen_time = None
         return dynamic, closing_speed
 
     def _best_gap_target(self) -> GapTarget | None:

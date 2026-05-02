@@ -23,6 +23,15 @@ def generate_launch_description():
         DeclareLaunchArgument('cmd_vel_stamped', default_value='true'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
+        DeclareLaunchArgument('max_speed', default_value='0.12'),
+        DeclareLaunchArgument('emergency_distance', default_value='0.25'),
+        DeclareLaunchArgument('obstacle_distance', default_value='0.70'),
+        DeclareLaunchArgument('clear_distance', default_value='0.90'),
+        DeclareLaunchArgument('depth_obstacle_distance', default_value='0.80'),
+        DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
+        DeclareLaunchArgument('avoid_turn_only_distance', default_value='0.65'),
+        DeclareLaunchArgument('avoid_forward_distance', default_value='0.90'),
+        DeclareLaunchArgument('dynamic_hold_sec', default_value='0.80'),
     ]
 
     obstacle_perception = Node(
@@ -39,6 +48,15 @@ def generate_launch_description():
                 'use_depth': LaunchConfiguration('use_depth'),
                 'use_tof': LaunchConfiguration('use_tof'),
                 'obstacle_topic': LaunchConfiguration('obstacle_topic'),
+                'emergency_distance': LaunchConfiguration('emergency_distance'),
+                'obstacle_distance': LaunchConfiguration('obstacle_distance'),
+                'clear_distance': LaunchConfiguration('clear_distance'),
+                'depth_obstacle_distance': LaunchConfiguration(
+                    'depth_obstacle_distance'
+                ),
+                'dynamic_closing_speed': LaunchConfiguration(
+                    'dynamic_closing_speed'
+                ),
             },
         ],
         output='screen',
@@ -54,6 +72,16 @@ def generate_launch_description():
                 'obstacle_topic': LaunchConfiguration('obstacle_topic'),
                 'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
                 'cmd_vel_stamped': LaunchConfiguration('cmd_vel_stamped'),
+                'max_speed': LaunchConfiguration('max_speed'),
+                'obstacle_distance': LaunchConfiguration('obstacle_distance'),
+                'clear_distance': LaunchConfiguration('clear_distance'),
+                'avoid_turn_only_distance': LaunchConfiguration(
+                    'avoid_turn_only_distance'
+                ),
+                'avoid_forward_distance': LaunchConfiguration(
+                    'avoid_forward_distance'
+                ),
+                'dynamic_hold_sec': LaunchConfiguration('dynamic_hold_sec'),
             },
         ],
         output='screen',

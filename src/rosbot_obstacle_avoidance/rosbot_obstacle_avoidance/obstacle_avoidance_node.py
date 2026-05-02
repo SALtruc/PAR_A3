@@ -69,16 +69,20 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('state_topic', '/obstacle_avoidance_state')
         self.declare_parameter('control_hz', 20.0)
 
-        self.declare_parameter('max_speed', 0.18)
+        self.declare_parameter('max_speed', 0.12)
         self.declare_parameter('min_speed', 0.05)
         self.declare_parameter('reverse_speed', 0.08)
-        self.declare_parameter('max_angular_speed', 0.65)
+        self.declare_parameter('max_angular_speed', 0.50)
         self.declare_parameter('gap_kp', 1.25)
         self.declare_parameter('corridor_kp', 0.45)
 
-        self.declare_parameter('obstacle_distance', 0.55)
-        self.declare_parameter('clear_distance', 0.75)
+        self.declare_parameter('obstacle_distance', 0.70)
+        self.declare_parameter('clear_distance', 0.90)
         self.declare_parameter('dynamic_stop_distance', 0.90)
+        self.declare_parameter('avoid_turn_only_distance', 0.65)
+        self.declare_parameter('avoid_forward_distance', 0.90)
+        self.declare_parameter('backup_clear_distance', 0.35)
+        self.declare_parameter('dynamic_hold_sec', 0.80)
         self.declare_parameter('obstacle_stale_sec', 1.0)
         self.declare_parameter('backup_sec', 0.9)
         self.declare_parameter('turn_out_sec', 1.8)
@@ -107,6 +111,16 @@ class ObstacleAvoidanceNode(Node):
         self._dynamic_stop_distance = float(
             self.get_parameter('dynamic_stop_distance').value
         )
+        self._avoid_turn_only_distance = float(
+            self.get_parameter('avoid_turn_only_distance').value
+        )
+        self._avoid_forward_distance = float(
+            self.get_parameter('avoid_forward_distance').value
+        )
+        self._backup_clear_distance = float(
+            self.get_parameter('backup_clear_distance').value
+        )
+        self._dynamic_hold_sec = float(self.get_parameter('dynamic_hold_sec').value)
         self._obstacle_stale_sec = float(self.get_parameter('obstacle_stale_sec').value)
         self._backup_sec = float(self.get_parameter('backup_sec').value)
         self._turn_out_sec = float(self.get_parameter('turn_out_sec').value)
@@ -123,6 +137,7 @@ class ObstacleAvoidanceNode(Node):
         self._state = NO_OBSTACLES
         self._state_end_time = 0.0
         self._turn_direction = 1.0
+        self._dynamic_hold_until = 0.0
         self._wander_next_time = 0.0
         self._wander_bias = 0.0
 
@@ -172,6 +187,7 @@ class ObstacleAvoidanceNode(Node):
         front = _finite_or_inf(fused.get('front_distance'))
         left = _finite_or_inf(fused.get('left_distance'))
         right = _finite_or_inf(fused.get('right_distance'))
+        rear = _finite_or_inf(fused.get('rear_distance'))
         emergency = bool(fused.get('emergency', False))
         blocked = bool(fused.get('blocked', False))
         dead_end = bool(fused.get('dead_end', False))
@@ -185,6 +201,10 @@ class ObstacleAvoidanceNode(Node):
 
         if self._state == EMERGENCY:
             self._transition(AVOID if blocked else DRIVE)
+
+        if self._state == DYNAMIC_AVOID and now < self._dynamic_hold_until:
+            self._publish_velocity(twist)
+            return
 
         if self._state == BACKUP:
             if now >= self._state_end_time:
@@ -205,16 +225,23 @@ class ObstacleAvoidanceNode(Node):
 
         if dead_end:
             self._turn_direction = self._clearer_side(left, right)
-            self._transition(BACKUP, self._backup_sec)
+            if rear > self._backup_clear_distance:
+                self._transition(BACKUP, self._backup_sec)
+            else:
+                self._transition(TURN_OUT, self._turn_out_sec)
             self._publish_velocity(twist)
             return
 
         if dynamic_obstacle and front < self._dynamic_stop_distance:
-            self._transition(DYNAMIC_AVOID)
+            self._dynamic_hold_until = max(
+                self._dynamic_hold_until,
+                now + self._dynamic_hold_sec,
+            )
+            self._transition(DYNAMIC_AVOID, self._dynamic_hold_sec)
             self._drive_dynamic_obstacle(twist, target)
         elif blocked or front < self._obstacle_distance:
             self._transition(AVOID)
-            self._drive_toward_gap(twist, target, front)
+            self._drive_toward_gap(twist, target, front, left, right)
         else:
             self._transition(DRIVE)
             self._drive_clear_path(twist, target, left, right, front)
@@ -232,34 +259,42 @@ class ObstacleAvoidanceNode(Node):
         return GapTarget(angle=angle, clearance=clearance, width=width)
 
     def _drive_dynamic_obstacle(self, twist: Twist, target: GapTarget | None):
-        if target is None:
-            return
-        twist.angular.z = _clamp(
-            self._gap_kp * target.angle,
-            -self._max_angular_speed,
-            self._max_angular_speed,
-        )
-        if abs(target.angle) < 0.20:
-            twist.linear.x = self._min_speed * 0.5
+        # Dynamic objects are usually people. Stop first; the next cycle can
+        # re-enter AVOID/DRIVE after the hold window if the path is clear.
+        del target
+        twist.linear.x = 0.0
+        twist.angular.z = 0.0
 
     def _drive_toward_gap(
             self,
             twist: Twist,
             target: GapTarget | None,
-            front: float):
+            front: float,
+            left: float,
+            right: float):
         if target is None:
             self._transition(BACKUP, self._backup_sec)
             return
 
-        angular = _clamp(
-            self._gap_kp * target.angle,
+        turn_angle = target.angle
+        if abs(turn_angle) < 0.12 and front < self._avoid_forward_distance:
+            turn_angle = self._clearer_side(left, right) * 0.55
+
+        twist.angular.z = _clamp(
+            self._gap_kp * turn_angle,
             -self._max_angular_speed,
             self._max_angular_speed,
         )
-        turn_scale = max(0.25, 1.0 - abs(target.angle) / math.radians(110.0))
-        distance_scale = _clamp(front / self._obstacle_distance, 0.2, 1.0)
-        twist.linear.x = self._min_speed * turn_scale * distance_scale
-        twist.angular.z = angular
+
+        # Never creep into a close obstacle. Rotate until the front sector is
+        # comfortably clear, then resume slow forward motion through the gap.
+        if front < self._avoid_turn_only_distance:
+            twist.linear.x = 0.0
+            return
+
+        if front >= self._avoid_forward_distance:
+            turn_scale = max(0.25, 1.0 - abs(target.angle) / math.radians(110.0))
+            twist.linear.x = self._min_speed * turn_scale
 
     def _drive_clear_path(
             self,
