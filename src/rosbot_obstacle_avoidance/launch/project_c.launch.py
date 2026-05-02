@@ -36,6 +36,7 @@ def generate_launch_description():
         DeclareLaunchArgument('slow_distance', default_value='0.55'),
         DeclareLaunchArgument('front_body_offset_m', default_value='0.10'),
         DeclareLaunchArgument('depth_obstacle_distance', default_value='0.45'),
+        DeclareLaunchArgument('front_center_angle_deg', default_value='0.0'),
         DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
         DeclareLaunchArgument('obstacle_hold_sec', default_value='0.35'),
         DeclareLaunchArgument('clear_confirm_sec', default_value='0.20'),
@@ -69,6 +70,9 @@ def generate_launch_description():
                 'emergency_distance': LaunchConfiguration('emergency_distance'),
                 'obstacle_distance': LaunchConfiguration('obstacle_distance'),
                 'clear_distance': LaunchConfiguration('clear_distance'),
+                'front_center_angle_deg': LaunchConfiguration(
+                    'front_center_angle_deg'
+                ),
                 'front_percentile': LaunchConfiguration('front_percentile'),
                 'front_close_min_rays': LaunchConfiguration('front_close_min_rays'),
                 'front_close_min_ratio': LaunchConfiguration(

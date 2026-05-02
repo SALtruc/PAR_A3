@@ -80,6 +80,7 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('emergency_distance', 0.18)
         self.declare_parameter('obstacle_distance', 0.55)
         self.declare_parameter('clear_distance', 0.75)
+        self.declare_parameter('front_center_angle_deg', 0.0)
         self.declare_parameter('front_angle_deg', 30.0)
         self.declare_parameter('front_percentile', 15.0)
         self.declare_parameter('front_close_min_rays', 3)
@@ -102,6 +103,9 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('pointcloud_min_forward_m', 0.08)
         self.declare_parameter('pointcloud_max_forward_m', 4.00)
         self.declare_parameter('pointcloud_sample_step', 3)
+        self.declare_parameter('pointcloud_roi_stride_px', 12)
+        self.declare_parameter('pointcloud_process_hz', 5.0)
+        self.declare_parameter('pointcloud_unorganized_max_points', 8000)
         self.declare_parameter('dynamic_obstacle_distance', 1.0)
         self.declare_parameter('dynamic_closing_speed', 0.80)
         self.declare_parameter('dynamic_confirm_sec', 0.20)
@@ -131,6 +135,9 @@ class ObstaclePerceptionNode(Node):
         )
         self._obstacle_distance = float(self.get_parameter('obstacle_distance').value)
         self._clear_distance = float(self.get_parameter('clear_distance').value)
+        self._front_center_angle = math.radians(
+            float(self.get_parameter('front_center_angle_deg').value)
+        )
         self._front_angle = math.radians(
             float(self.get_parameter('front_angle_deg').value)
         )
@@ -197,6 +204,18 @@ class ObstaclePerceptionNode(Node):
             1,
             int(self.get_parameter('pointcloud_sample_step').value),
         )
+        self._pointcloud_roi_stride_px = max(
+            1,
+            int(self.get_parameter('pointcloud_roi_stride_px').value),
+        )
+        self._pointcloud_process_period = 1.0 / max(
+            0.1,
+            float(self.get_parameter('pointcloud_process_hz').value),
+        )
+        self._pointcloud_unorganized_max_points = max(
+            100,
+            int(self.get_parameter('pointcloud_unorganized_max_points').value),
+        )
         self._dynamic_obstacle_distance = float(
             self.get_parameter('dynamic_obstacle_distance').value
         )
@@ -226,6 +245,7 @@ class ObstaclePerceptionNode(Node):
         self._pointcloud_left = math.inf
         self._pointcloud_right = math.inf
         self._last_pointcloud_time: float | None = None
+        self._last_pointcloud_process_time = 0.0
         self._tof_range = math.inf
         self._last_tof_time: float | None = None
         self._tof_ranges: dict[str, float] = {}
@@ -339,22 +359,27 @@ class ObstaclePerceptionNode(Node):
         )
 
     def _on_pointcloud(self, msg: PointCloud2):
+        now = time.monotonic()
+        if now - self._last_pointcloud_process_time < self._pointcloud_process_period:
+            return
+        self._last_pointcloud_process_time = now
+
         front_vals: list[float] = []
         left_vals: list[float] = []
         right_vals: list[float] = []
 
         try:
-            points = point_cloud2.read_points(
-                msg,
-                field_names=('x', 'y', 'z'),
-                skip_nans=True,
-            )
+            points = self._sample_pointcloud(msg)
         except Exception:
             return
 
         for index, point in enumerate(points):
-            if index % self._pointcloud_sample_step != 0:
+            if (
+                    msg.height <= 1
+                    and index % self._pointcloud_sample_step != 0):
                 continue
+            if msg.height <= 1 and index >= self._pointcloud_unorganized_max_points:
+                break
             xyz = self._point_xyz(point)
             if xyz is None:
                 continue
@@ -383,10 +408,30 @@ class ObstaclePerceptionNode(Node):
                     <= self._pointcloud_side_max_abs_m):
                 right_vals.append(forward)
 
-        self._last_pointcloud_time = time.monotonic()
+        self._last_pointcloud_time = now
         self._pointcloud_front = self._pointcloud_stat(front_vals)
         self._pointcloud_left = self._pointcloud_stat(left_vals)
         self._pointcloud_right = self._pointcloud_stat(right_vals)
+
+    def _sample_pointcloud(self, msg: PointCloud2):
+        if msg.height > 1 and msg.width > 1:
+            stride = self._pointcloud_roi_stride_px
+            uvs = [
+                (u, v)
+                for v in range(0, msg.height, stride)
+                for u in range(0, msg.width, stride)
+            ]
+            return point_cloud2.read_points(
+                msg,
+                field_names=('x', 'y', 'z'),
+                skip_nans=True,
+                uvs=uvs,
+            )
+        return point_cloud2.read_points(
+            msg,
+            field_names=('x', 'y', 'z'),
+            skip_nans=True,
+        )
 
     @staticmethod
     def _point_xyz(point) -> tuple[float, float, float] | None:
@@ -762,20 +807,21 @@ class ObstaclePerceptionNode(Node):
 
         angle = scan.angle_min
         for value in scan.ranges:
+            rel_angle = self._relative_angle(angle, self._front_center_angle)
             distance = self._normalized_scan_distance(scan, value)
             valid = distance is not None
             if valid:
-                if -self._front_angle <= angle <= self._front_angle:
+                if -self._front_angle <= rel_angle <= self._front_angle:
                     front_vals.append(distance)
-                if left_lo <= angle <= self._side_angle:
+                if left_lo <= rel_angle <= self._side_angle:
                     left_vals.append(distance)
-                if -self._side_angle <= angle <= right_hi:
+                if -self._side_angle <= rel_angle <= right_hi:
                     right_vals.append(distance)
-                if rear_lo <= angle <= math.pi or -math.pi <= angle <= rear_hi:
+                if rear_lo <= rel_angle <= math.pi or -math.pi <= rel_angle <= rear_hi:
                     rear_vals.append(distance)
-            if -self._gap_angle_limit <= angle <= self._gap_angle_limit:
+            if -self._gap_angle_limit <= rel_angle <= self._gap_angle_limit:
                 gap_valid = valid and distance >= self._obstacle_distance
-                gap_points.append((angle, distance if valid else math.inf, gap_valid))
+                gap_points.append((rel_angle, distance if valid else math.inf, gap_valid))
             angle += scan.angle_increment
 
         if not front_vals:
@@ -825,6 +871,11 @@ class ObstaclePerceptionNode(Node):
                 return float(scan.range_max)
             return 10.0
         return None
+
+    @staticmethod
+    def _relative_angle(angle: float, center: float) -> float:
+        delta = angle - center
+        return math.atan2(math.sin(delta), math.cos(delta))
 
     def _find_best_gap(self, points: list[tuple[float, float, bool]]) -> GapTarget | None:
         best: GapTarget | None = None

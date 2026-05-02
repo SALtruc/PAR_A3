@@ -17,6 +17,7 @@ obstacle_perception:
     emergency_distance: 0.12
     obstacle_distance: 0.30
     clear_distance: 0.40
+    front_center_angle_deg: 0.0
     front_angle_deg: 40.0
     front_percentile: 15.0
     front_close_min_rays: 3
@@ -39,6 +40,9 @@ obstacle_perception:
     pointcloud_min_forward_m: 0.08
     pointcloud_max_forward_m: 4.00
     pointcloud_sample_step: 3
+    pointcloud_roi_stride_px: 12
+    pointcloud_process_hz: 5.0
+    pointcloud_unorganized_max_points: 8000
     dynamic_obstacle_distance: 0.70
     dynamic_closing_speed: 0.80
     dynamic_confirm_sec: 0.20
