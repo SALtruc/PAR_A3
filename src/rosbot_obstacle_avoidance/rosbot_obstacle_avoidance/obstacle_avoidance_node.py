@@ -67,6 +67,7 @@ class GapTarget:
 
 @dataclass
 class Snapshot:
+    front_raw: float
     front: float
     left: float
     right: float
@@ -108,15 +109,16 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('gap_kp', 0.65)
         self.declare_parameter('corridor_kp', 0.14)
 
-        self.declare_parameter('obstacle_distance', 0.65)
-        self.declare_parameter('clear_distance', 0.90)
-        self.declare_parameter('dynamic_stop_distance', 0.90)
+        self.declare_parameter('obstacle_distance', 0.15)
+        self.declare_parameter('clear_distance', 0.25)
+        self.declare_parameter('front_body_offset_m', 0.10)
+        self.declare_parameter('dynamic_stop_distance', 0.80)
         self.declare_parameter('dynamic_check_frames', 4)
         self.declare_parameter('dynamic_clear_frames', 2)
         self.declare_parameter('obstacle_stale_sec', 1.0)
         self.declare_parameter('turn_out_sec', 0.90)
         self.declare_parameter('side_balance_distance', 0.80)
-        self.declare_parameter('side_protect_distance', 0.45)
+        self.declare_parameter('side_protect_distance', 0.25)
         self.declare_parameter('turn_direction_hold_sec', 0.80)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 1.0)
@@ -140,6 +142,10 @@ class ObstacleAvoidanceNode(Node):
         self._corridor_kp = float(self.get_parameter('corridor_kp').value)
         self._obstacle_distance = float(self.get_parameter('obstacle_distance').value)
         self._clear_distance = float(self.get_parameter('clear_distance').value)
+        self._front_body_offset_m = max(
+            0.0,
+            float(self.get_parameter('front_body_offset_m').value),
+        )
         self._dynamic_stop_distance = float(
             self.get_parameter('dynamic_stop_distance').value
         )
@@ -289,7 +295,8 @@ class ObstacleAvoidanceNode(Node):
         tof = data.get('tof', {})
 
         source = list(fused.get('source', []))
-        front = _finite_or_inf(fused.get('front_distance'))
+        front_raw = _finite_or_inf(fused.get('front_distance'))
+        front = self._front_spacing(front_raw)
         left = _finite_or_inf(fused.get('left_distance'))
         right = _finite_or_inf(fused.get('right_distance'))
         rear = _finite_or_inf(fused.get('rear_distance'))
@@ -298,8 +305,8 @@ class ObstacleAvoidanceNode(Node):
         lidar_available = bool(lidar.get('available', False))
         depth_available = bool(depth.get('available', False))
         tof_available = bool(tof.get('available', False))
-        lidar_front = _finite_or_inf(lidar.get('front_control'))
-        depth_front = _finite_or_inf(depth.get('front_min'))
+        lidar_front = self._front_spacing(_finite_or_inf(lidar.get('front_control')))
+        depth_front = self._front_spacing(_finite_or_inf(depth.get('front_min')))
 
         lidar_obstacle = lidar_available and (
             'lidar' in source
@@ -334,6 +341,7 @@ class ObstacleAvoidanceNode(Node):
         side_escape = self._side_escape_direction(left, right)
 
         return Snapshot(
+            front_raw=front_raw,
             front=front,
             left=left,
             right=right,
@@ -458,7 +466,10 @@ class ObstacleAvoidanceNode(Node):
         elif (
                 snapshot.target is not None
                 and math.isfinite(snapshot.target.angle)
-                and abs(snapshot.target.angle) > 0.12):
+                and abs(snapshot.target.angle) > 0.12
+                and snapshot.front >= self._obstacle_distance):
+            # Only steer toward gap when front is not actively blocked;
+            # gap angle is too noisy close-up and causes oscillation.
             self._turn_direction = 1.0 if snapshot.target.angle > 0.0 else -1.0
         else:
             self._turn_direction = self._clearer_side(snapshot.left, snapshot.right)
@@ -469,6 +480,11 @@ class ObstacleAvoidanceNode(Node):
     def _reset_dynamic_check(self):
         self._dynamic_seen_frames = 0
         self._dynamic_clear_seen_frames = 0
+
+    def _front_spacing(self, value: float) -> float:
+        if not math.isfinite(value):
+            return value
+        return max(0.0, value - self._front_body_offset_m)
 
     @staticmethod
     def _target_from_fused(fused: dict) -> GapTarget | None:
@@ -512,11 +528,8 @@ class ObstacleAvoidanceNode(Node):
         now = time.monotonic()
         transition = self._debug_transition
 
-        # Only log on state transitions or when actively avoiding
-        active_state = self._state not in (DRIVE, NO_OBSTACLES)
         if (
                 transition is None
-                and not active_state
                 and now - self._last_debug_time < self._debug_period_sec):
             return
 
@@ -524,18 +537,20 @@ class ObstacleAvoidanceNode(Node):
         self._debug_transition = None
         snapshot = snapshot or self._snapshot()
 
-        if self._state in (DRIVE, NO_OBSTACLES) and transition is None:
+        if self._state in (DRIVE, NO_OBSTACLES):
             return
 
         obs_type = 'dynamic' if snapshot.dynamic_candidate else 'static'
         dead_end = 'YES' if snapshot.dead_end else 'no'
-        front_cm = _fmt_cm(snapshot.front)
+        spacing_cm = _fmt_cm(snapshot.front)
+        raw_front_cm = _fmt_cm(snapshot.front_raw)
         left_cm = _fmt_cm(snapshot.left)
         right_cm = _fmt_cm(snapshot.right)
 
         self.get_logger().warn(
             f'[OBSTACLE] state={self._state} type={obs_type} '
-            f'front={front_cm} left={left_cm} right={right_cm} '
+            f'spacing={spacing_cm} raw_front={raw_front_cm} '
+            f'left={left_cm} right={right_cm} '
             f'dead_end={dead_end} reason={reason}'
         )
 

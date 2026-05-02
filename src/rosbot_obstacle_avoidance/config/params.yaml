@@ -11,9 +11,9 @@ obstacle_perception:
     use_tof: true
     publish_hz: 20.0
 
-    emergency_distance: 0.20
-    obstacle_distance: 0.45
-    clear_distance: 0.65
+    emergency_distance: 0.10
+    obstacle_distance: 0.15
+    clear_distance: 0.25
     front_angle_deg: 40.0
     front_percentile: 15.0
     front_close_min_rays: 3
@@ -50,16 +50,17 @@ obstacle_avoidance:
     gap_kp: 0.65
     corridor_kp: 0.14
 
-    obstacle_distance: 0.45
-    clear_distance: 0.65
-    dynamic_stop_distance: 0.65
+    obstacle_distance: 0.15
+    clear_distance: 0.25
+    front_body_offset_m: 0.10
+    dynamic_stop_distance: 0.80
     dynamic_check_frames: 4
     dynamic_clear_frames: 2
     obstacle_stale_sec: 1.0
     turn_out_sec: 0.90
     side_balance_distance: 0.80
-    side_protect_distance: 0.45
-    turn_direction_hold_sec: 0.80
+    side_protect_distance: 0.25
+    turn_direction_hold_sec: 2.5
     debug_decisions: true
     debug_period_sec: 1.0
 

@@ -75,9 +75,10 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | Parameter | Default | Notes |
 |---|---|---|
 | `max_speed` | `0.10` | Roaming speed in clear space |
-| `obstacle_distance` | `0.65` | Spacing distance that starts avoidance |
-| `clear_distance` | `0.90` | Distance treated as comfortably clear |
-| `emergency_distance` | `0.25` | Hard stop threshold |
+| `obstacle_distance` | `0.15` | Body spacing that starts static obstacle avoidance |
+| `clear_distance` | `0.25` | Body spacing treated as clear again |
+| `front_body_offset_m` | `0.10` | Approximate distance from front bumper to the range sensor, subtracted in logs/control |
+| `emergency_distance` | `0.10` | Hard stop threshold at the sensor |
 | `front_close_min_rays` | `3` | Minimum LIDAR rays needed for a small obstacle cluster |
 | `front_close_min_ratio` | `0.01` | Minimum fraction of front rays needed for that cluster |
 | `depth_obstacle_distance` | `0.80` | Depth-camera front obstacle threshold |
@@ -89,5 +90,5 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
 | `corridor_kp` | `0.14` | Narrow-passage centering strength |
 | `turn_out_sec` | `0.90` | Dead-end turn check interval; if still blocked, it keeps turning |
-| `side_protect_distance` | `0.45` | Stops forward motion and turns away from a close side wall |
+| `side_protect_distance` | `0.25` | Stops forward motion and turns away from a close side wall |
 | `turn_direction_hold_sec` | `0.80` | Prevents left/right avoid direction from flipping every scan |
