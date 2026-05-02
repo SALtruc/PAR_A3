@@ -349,12 +349,15 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # 2) A side clearance of 0-5cm usually means a wheel/body is scraping.
-        # Do not keep driving in this case, even if the front looks open.
-        if self._side_critical(snapshot):
+        # 2) Side critical is NOT allowed to cause backup if the face/front is open.
+        # Previous version created a BACKUP -> DRIVE -> BACKUP loop when one side
+        # briefly read 1-3cm while the front was >1m clear. If the front is blocked
+        # too, then backing up is valid; otherwise keep heading mostly straight and
+        # only apply a tiny escape steer.
+        if self._side_critical(snapshot) and not self._front_is_usable(snapshot):
             self._start_backup(snapshot, now)
             self._handle_backup(twist, snapshot, now)
-            self._log_decision('side_critical_backup', snapshot)
+            self._log_decision('side_critical_with_blocked_front_backup', snapshot)
             self._publish_velocity(twist)
             return
 
@@ -450,8 +453,13 @@ class ObstacleAvoidanceNode(Node):
     def _handle_dodge(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
         front_decision = self._front_decision_distance(snapshot)
 
-        # Too close or side scrape during dodge: back up.
-        if self._too_close(snapshot) or self._side_critical(snapshot):
+        # Too close during dodge: back up. Side proximity alone should not
+        # trigger backup if the front path is still usable; otherwise it causes
+        # BACKUP -> DRIVE loops near walls.
+        if self._too_close(snapshot):
+            self._start_backup(snapshot, now)
+            return True
+        if self._side_critical(snapshot) and not self._front_is_usable(snapshot):
             self._start_backup(snapshot, now)
             return True
 
@@ -552,27 +560,22 @@ class ObstacleAvoidanceNode(Node):
         return math.isfinite(side_min) and side_min <= self._side_critical_distance
 
     def _front_is_usable(self, snapshot: Snapshot) -> bool:
-        """True when the robot's current face/front path is clear enough to continue."""
+        """True only when the robot's current face/front path is clear.
+
+        Important: do NOT use best_gap here. The robot should drive straight when
+        the current front is clear. best_gap is only used after a real front
+        obstacle is observed and confirmed.
+        """
         front_decision = self._front_decision_distance(snapshot)
         if not math.isfinite(front_decision):
             return True
-        if front_decision >= self._clear_distance:
-            return True
-        # Use best gap only as a secondary signal, and only when the raw front is
-        # not dangerously close. This prevents driving into close objects just
-        # because a far gap exists at an angle.
-        if front_decision > self._observe_distance and snapshot.target is not None:
-            return (
-                abs(snapshot.target.angle) <= math.radians(20)
-                and snapshot.target.clearance >= self._clear_distance
-            )
-        return False
+        return front_decision >= self._clear_distance
 
     def _front_needs_avoid(self, snapshot: Snapshot) -> bool:
         front_decision = self._front_decision_distance(snapshot)
         return (
             math.isfinite(front_decision)
-            and self._observe_distance < front_decision < self._avoidance_distance
+            and self._observe_distance < front_decision < self._clear_distance
         )
 
     def _should_observe(self, snapshot: Snapshot) -> bool:
@@ -671,33 +674,52 @@ class ObstacleAvoidanceNode(Node):
     # ── DRIVE straight with corridor centering ────────────────────────────────
 
     def _drive_straight(self, twist: Twist, snapshot: Snapshot, force_slow: bool = False):
+        """Normal behaviour: go straight.
+
+        Do not follow best_gap and do not corridor-center aggressively during normal
+        DRIVE. Small side readings are often walls beside the robot, not a reason to
+        leave the straight heading. Only apply a very small correction when a side is
+        extremely close; confirmed front obstacles are handled by OBSERVE/DODGE/ROTATE.
+        """
         twist.linear.x = self._max_speed
         twist.angular.z = 0.0
 
         if force_slow or snapshot.front < self._slow_distance:
             twist.linear.x = self._min_speed
 
-        # If only one side is dangerously close, keep driving but steer away.
-        if snapshot.side_escape is not None:
-            twist.linear.x = min(twist.linear.x, self._min_speed)
+        # Emergency side scrape escape: keep slow and steer slightly away, but do
+        # not back up and do not rotate in place while front is open.
+        side_min = min(snapshot.left, snapshot.right)
+        if math.isfinite(side_min) and side_min <= self._side_critical_distance:
+            twist.linear.x = self._min_speed
+            if snapshot.left <= snapshot.right:
+                # left is too close -> steer right
+                direction = -1.0
+            else:
+                # right is too close -> steer left
+                direction = 1.0
             twist.angular.z = _clamp(
-                snapshot.side_escape * self._drive_max_angular_speed,
-                -self._drive_max_angular_speed,
-                self._drive_max_angular_speed,
+                direction * min(self._drive_max_angular_speed, 0.08),
+                -0.08,
+                0.08,
             )
             return
 
-        # Corridor centering: turn slightly toward the side with more room.
-        if (
-                math.isfinite(snapshot.left)
-                and math.isfinite(snapshot.right)
-                and min(snapshot.left, snapshot.right) < self._side_balance_distance):
-            corridor_error = snapshot.left - snapshot.right
+        # Soft side correction only if a wall/object is quite close. Keep it tiny
+        # so the robot still looks like it is driving straight.
+        if snapshot.side_escape is not None:
+            twist.linear.x = min(twist.linear.x, self._min_speed)
             twist.angular.z = _clamp(
-                self._corridor_kp * corridor_error,
-                -self._drive_max_angular_speed,
-                self._drive_max_angular_speed,
+                snapshot.side_escape * min(self._drive_max_angular_speed, 0.05),
+                -0.05,
+                0.05,
             )
+            return
+
+        # Disable corridor centering during normal roaming. It caused the robot to
+        # drift/curve even when the front was fully clear. Uncomment only for a
+        # corridor-following variant.
+        return
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
 

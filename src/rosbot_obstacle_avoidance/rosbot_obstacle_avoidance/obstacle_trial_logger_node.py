@@ -13,7 +13,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 
-RESPONSE_STATES = {'AVOID', 'DYNAMIC_AVOID', 'BACKUP', 'TURN_OUT', 'EMERGENCY'}
+RESPONSE_STATES = {'OBSERVE', 'DODGE', 'ROTATE', 'BACKUP', 'EMERGENCY'}
 
 
 def _as_bool(value) -> bool:

@@ -72,14 +72,14 @@ class ObstaclePerceptionNode(Node):
         super().__init__('obstacle_perception')
 
         self.declare_parameter('scan_topic', '/scan')
-        self.declare_parameter('depth_topic', '/camera/depth/image_rect_raw')
+        self.declare_parameter('depth_topic', '/oak/stereo/image_raw')
         self.declare_parameter('pointcloud_topic', '/oak/points')
         self.declare_parameter('tof_topic', '/range')
         self.declare_parameter('tof_topics', '/range/fl,/range/fr,/range/rl,/range/rr')
         self.declare_parameter('obstacle_topic', '/obstacle_representation')
         self.declare_parameter('use_lidar', True)
         self.declare_parameter('use_depth', True)
-        self.declare_parameter('use_pointcloud', True)
+        self.declare_parameter('use_pointcloud', False)
         self.declare_parameter('use_tof', True)
         self.declare_parameter('publish_hz', 20.0)
 
