@@ -1,24 +1,27 @@
-# params.yaml - Project C: Reactive autonomous navigation
+# params.yaml - Project C refined config
+# Goal: default straight driving; observe before dodging; gentle dodge; backup/rotate only for real danger/dead-end.
 
 obstacle_perception:
   ros__parameters:
     scan_topic: /scan_filtered
-    depth_topic: /camera/depth/image_rect_raw
+    depth_topic: /oak/stereo/image_raw
     pointcloud_topic: /oak/points
     tof_topic: /range
     tof_topics: /range/fl,/range/fr,/range/rl,/range/rr
     obstacle_topic: /obstacle_representation
+
     use_lidar: true
-    use_depth: false
-    use_pointcloud: true
+    use_depth: true
+    use_pointcloud: false
     use_tof: true
     publish_hz: 20.0
 
-    emergency_distance: 0.12
-    obstacle_distance: 0.20
-    clear_distance: 0.30
+    # LIDAR safety/perception thresholds
+    emergency_distance: 0.14
+    obstacle_distance: 0.22
+    clear_distance: 0.28
     front_center_angle_deg: 0.0
-    front_angle_deg: 40.0
+    front_angle_deg: 28.0
     front_percentile: 15.0
     robot_half_width_m: 0.13
     front_path_half_width_m: 0.18
@@ -28,13 +31,16 @@ obstacle_perception:
     front_close_min_rays: 3
     front_close_min_ratio: 0.01
     rear_angle_deg: 35.0
-    gap_angle_limit_deg: 110.0
+    gap_angle_limit_deg: 100.0
     sensor_stale_sec: 1.0
 
-    depth_obstacle_distance: 0.55
-    depth_center_fraction: 0.33
+    # OAK depth: secondary confirmation + dynamic object support
+    depth_obstacle_distance: 0.45
+    depth_center_fraction: 0.36
     depth_side_fraction: 0.30
-    depth_height_fraction: 0.40
+    depth_height_fraction: 0.42
+
+    # Pointcloud kept off for stability. Turn on only for ablation/demo if needed.
     pointcloud_frame: optical
     pointcloud_percentile: 10.0
     pointcloud_center_half_width_m: 0.35
@@ -47,12 +53,22 @@ obstacle_perception:
     pointcloud_roi_stride_px: 12
     pointcloud_process_hz: 5.0
     pointcloud_unorganized_max_points: 8000
-    dynamic_obstacle_distance: 0.70
+
+    # Dynamic motion from depth image lower-centre ROI, useful for legs/feet.
+    dynamic_obstacle_distance: 0.80
     dynamic_closing_speed: 0.80
     dynamic_confirm_sec: 0.20
     front_filter_alpha: 0.35
-    obstacle_hold_sec: 0.35
-    clear_confirm_sec: 0.20
+    obstacle_hold_sec: 0.15
+    clear_confirm_sec: 0.10
+    depth_motion_enabled: true
+    depth_motion_y_center: 0.68
+    depth_motion_width_fraction: 0.45
+    depth_motion_height_fraction: 0.38
+    depth_motion_delta_m: 0.10
+    depth_motion_near_m: 1.20
+    depth_motion_min_ratio: 0.015
+    depth_motion_confirm_frames: 2
 
 obstacle_avoidance:
   ros__parameters:
@@ -64,43 +80,37 @@ obstacle_avoidance:
     state_topic: /obstacle_avoidance_state
     control_hz: 20.0
 
+    # Default movement
     max_speed: 0.10
-    min_speed: 0.05
-    max_angular_speed: 0.35
-    drive_max_angular_speed: 0.12
-    corridor_kp: 0.14
+    observe_speed: 0.00
 
-    # distance thresholds
-    # snapshot.front = lidar_reading - front_body_offset (0.11m)
-    # obstacle_distance: 0.25 → triggers when lidar reads ≤ 0.36m = 25cm from front edge
-    obstacle_distance: 0.25
-    clear_distance: 0.35         # exit avoidance when front spacing >= 35 cm
-    slow_distance: 0.40          # slow down when front spacing < 40 cm
-    front_body_offset_m: 0.11
-    face_wall_distance: 0.12     # force backup when spacing <= 12 cm
+    # Gentle dodge, not strong corridor following
+    dodge_forward_speed: 0.045
+    dodge_angular_speed: 0.25
+    dodge_step_deg: 30.0
 
-    # dodge: creep forward + turn to squeeze past
-    dodge_clearance: 0.25        # min side room to attempt dodge
-    dodge_forward_speed: 0.02
-    dodge_duration_sec: 1.5
+    # Strong recovery only after too-close/dead-end
+    rotation_angular_speed: 0.35
+    rotation_step_deg: 70.0
+    max_rotation_attempts: 3
+    backup_speed: 0.07
+    backup_sec: 0.70
 
-    # rotate: exact 90-degree turn, try both directions
-    rotation_angular_speed: 0.45
-    max_rotation_attempts: 4
+    # Main thresholds
+    clear_distance: 0.28
+    stop_distance: 0.15
+    dodge_clearance: 0.25
+    rear_stop_distance: 0.20
+    observe_frames: 8
 
-    # backup
-    backup_speed: 0.08
-    backup_sec: 0.90
-    backup_rear_stop_distance: 0.25
-
-    side_balance_distance: 0.45
-    side_protect_distance: 0.20
+    # Keep false battery stop off during lab testing unless your battery topic is reliable.
     require_battery_ok: false
     min_battery_voltage: 8.5
     warn_battery_voltage: 9.0
     battery_stale_sec: 3.0
+
     debug_decisions: true
-    debug_period_sec: 1.0
+    debug_period_sec: 0.7
 
 obstacle_trial_logger:
   ros__parameters:
