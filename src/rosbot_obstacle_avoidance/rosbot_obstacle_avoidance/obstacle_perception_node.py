@@ -494,14 +494,19 @@ class ObstaclePerceptionNode(Node):
                 gap_points.append((angle, value if valid else math.inf, gap_valid))
             angle += scan.angle_increment
 
-        lidar_front = min(front_vals) if front_vals else math.inf
-        lidar_front_control = (
-            float(np.percentile(front_vals, self._front_percentile))
-            if front_vals else math.inf
-        )
-        lidar_front_mean = (
-            float(sum(front_vals) / len(front_vals)) if front_vals else math.inf
-        )
+        # If scan is live but front sector has zero valid rays the robot is
+        # almost certainly too close for the LIDAR's range_min to register.
+        # Treat it as an emergency-range obstacle rather than open space.
+        if not front_vals:
+            lidar_front = self._emergency_distance * 0.5
+            lidar_front_control = self._emergency_distance * 0.5
+            lidar_front_mean = self._emergency_distance * 0.5
+        else:
+            lidar_front = min(front_vals)
+            lidar_front_control = float(
+                np.percentile(front_vals, self._front_percentile)
+            )
+            lidar_front_mean = float(sum(front_vals) / len(front_vals))
         lidar_left = float(sum(left_vals) / len(left_vals)) if left_vals else math.inf
         lidar_right = float(sum(right_vals) / len(right_vals)) if right_vals else math.inf
         lidar_rear = float(sum(rear_vals) / len(rear_vals)) if rear_vals else math.inf

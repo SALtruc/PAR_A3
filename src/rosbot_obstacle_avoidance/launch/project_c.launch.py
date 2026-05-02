@@ -35,7 +35,7 @@ def generate_launch_description():
         DeclareLaunchArgument('avoid_forward_distance', default_value='0.80'),
         DeclareLaunchArgument('dynamic_hold_sec', default_value='0.80'),
         DeclareLaunchArgument('front_percentile', default_value='15.0'),
-        DeclareLaunchArgument('wander_enabled', default_value='false'),
+        DeclareLaunchArgument('wander_enabled', default_value='true'),
         DeclareLaunchArgument('debug_decisions', default_value='true'),
         DeclareLaunchArgument('debug_period_sec', default_value='1.0'),
     ]

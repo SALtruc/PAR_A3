@@ -14,7 +14,7 @@ obstacle_perception:
     emergency_distance: 0.25
     obstacle_distance: 0.55
     clear_distance: 0.80
-    front_angle_deg: 30.0
+    front_angle_deg: 40.0
     front_percentile: 15.0
     side_angle_deg: 70.0
     rear_angle_deg: 35.0
