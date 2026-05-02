@@ -32,6 +32,8 @@ def generate_launch_description():
         DeclareLaunchArgument('avoid_turn_only_distance', default_value='0.65'),
         DeclareLaunchArgument('avoid_forward_distance', default_value='0.90'),
         DeclareLaunchArgument('dynamic_hold_sec', default_value='0.80'),
+        DeclareLaunchArgument('debug_decisions', default_value='true'),
+        DeclareLaunchArgument('debug_period_sec', default_value='1.0'),
     ]
 
     obstacle_perception = Node(
@@ -82,6 +84,8 @@ def generate_launch_description():
                     'avoid_forward_distance'
                 ),
                 'dynamic_hold_sec': LaunchConfiguration('dynamic_hold_sec'),
+                'debug_decisions': LaunchConfiguration('debug_decisions'),
+                'debug_period_sec': LaunchConfiguration('debug_period_sec'),
             },
         ],
         output='screen',

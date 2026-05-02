@@ -50,6 +50,20 @@ def _finite_or_inf(value) -> float:
     return value_f if math.isfinite(value_f) else math.inf
 
 
+def _fmt_m(value: float) -> str:
+    return f'{value:.2f}m' if math.isfinite(value) else 'inf'
+
+
+def _fmt_opt_m(value) -> str:
+    return _fmt_m(_finite_or_inf(value))
+
+
+def _fmt_age(value) -> str:
+    if value is None:
+        return 'none'
+    return f'{float(value):.2f}s'
+
+
 @dataclass
 class GapTarget:
     angle: float
@@ -89,6 +103,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('wander_enabled', True)
         self.declare_parameter('wander_interval_sec', 4.0)
         self.declare_parameter('wander_angular_speed', 0.18)
+        self.declare_parameter('debug_decisions', True)
+        self.declare_parameter('debug_period_sec', 1.0)
 
         obstacle_topic = self.get_parameter('obstacle_topic').value
         cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
@@ -131,6 +147,8 @@ class ObstacleAvoidanceNode(Node):
         self._wander_angular_speed = float(
             self.get_parameter('wander_angular_speed').value
         )
+        self._debug_decisions = _as_bool(self.get_parameter('debug_decisions').value)
+        self._debug_period_sec = float(self.get_parameter('debug_period_sec').value)
 
         self._latest_obstacles: dict | None = None
         self._last_obstacle_time: float | None = None
@@ -140,6 +158,8 @@ class ObstacleAvoidanceNode(Node):
         self._dynamic_hold_until = 0.0
         self._wander_next_time = 0.0
         self._wander_bias = 0.0
+        self._last_debug_time = 0.0
+        self._debug_transition: str | None = None
 
         self.create_subscription(String, obstacle_topic, self._on_obstacles, 10)
         vel_type = TwistStamped if self._cmd_vel_stamped else Twist
@@ -149,7 +169,8 @@ class ObstacleAvoidanceNode(Node):
 
         self.get_logger().info(
             f'Obstacle decision ready. obstacles={obstacle_topic}, '
-            f'cmd_vel={cmd_vel_topic} ({vel_type.__name__})'
+            f'cmd_vel={cmd_vel_topic} ({vel_type.__name__}), '
+            f'debug_decisions={self._debug_decisions}'
         )
 
     def _on_obstacles(self, msg: String):
@@ -167,10 +188,12 @@ class ObstacleAvoidanceNode(Node):
 
     def _transition(self, new_state: str, duration: float = 0.0):
         if self._state != new_state:
+            previous = self._state
             self.get_logger().info(f'Obstacle FSM: {self._state} -> {new_state}')
             msg = String()
             msg.data = f'{time.time():.3f},{new_state}'
             self._state_pub.publish(msg)
+            self._debug_transition = f'{previous}->{new_state}'
         self._state = new_state
         self._state_end_time = time.monotonic() + duration
 
@@ -180,6 +203,7 @@ class ObstacleAvoidanceNode(Node):
 
         if self._latest_obstacles is None or not self._obstacles_recent():
             self._transition(NO_OBSTACLES)
+            self._log_decision('no_fresh_obstacle_representation', twist)
             self._publish_velocity(twist)
             return
 
@@ -196,6 +220,7 @@ class ObstacleAvoidanceNode(Node):
 
         if emergency:
             self._transition(EMERGENCY)
+            self._log_decision('emergency_stop', twist, fused, target)
             self._publish_velocity(twist)
             return
 
@@ -203,6 +228,7 @@ class ObstacleAvoidanceNode(Node):
             self._transition(AVOID if blocked else DRIVE)
 
         if self._state == DYNAMIC_AVOID and now < self._dynamic_hold_until:
+            self._log_decision('dynamic_hold', twist, fused, target)
             self._publish_velocity(twist)
             return
 
@@ -212,6 +238,7 @@ class ObstacleAvoidanceNode(Node):
                 self._transition(TURN_OUT, self._turn_out_sec)
             else:
                 twist.linear.x = -self._reverse_speed
+                self._log_decision('backup_reverse', twist, fused, target)
                 self._publish_velocity(twist)
                 return
 
@@ -220,6 +247,7 @@ class ObstacleAvoidanceNode(Node):
                 self._transition(AVOID)
             else:
                 twist.angular.z = self._turn_direction * self._max_angular_speed
+                self._log_decision('turn_out', twist, fused, target)
                 self._publish_velocity(twist)
                 return
 
@@ -229,6 +257,7 @@ class ObstacleAvoidanceNode(Node):
                 self._transition(BACKUP, self._backup_sec)
             else:
                 self._transition(TURN_OUT, self._turn_out_sec)
+            self._log_decision('dead_end_recovery', twist, fused, target)
             self._publish_velocity(twist)
             return
 
@@ -239,13 +268,16 @@ class ObstacleAvoidanceNode(Node):
             )
             self._transition(DYNAMIC_AVOID, self._dynamic_hold_sec)
             self._drive_dynamic_obstacle(twist, target)
+            self._log_decision('dynamic_obstacle_confirmed', twist, fused, target)
         elif blocked or front < self._obstacle_distance:
             self._transition(AVOID)
             self._drive_toward_gap(twist, target, front, left, right)
+            self._log_decision('blocked_or_too_close', twist, fused, target)
         else:
             self._transition(DRIVE)
             self._drive_clear_path(twist, target, left, right, front)
             self._apply_wander(twist, left, right, front, now)
+            self._log_decision('clear_drive', twist, fused, target)
 
         self._publish_velocity(twist)
 
@@ -350,6 +382,72 @@ class ObstacleAvoidanceNode(Node):
             twist.angular.z + self._wander_bias,
             -self._max_angular_speed,
             self._max_angular_speed,
+        )
+
+    def _log_decision(
+            self,
+            reason: str,
+            twist: Twist,
+            fused: dict | None = None,
+            target: GapTarget | None = None):
+        if not self._debug_decisions:
+            return
+
+        now = time.monotonic()
+        transition = self._debug_transition
+        if (
+                transition is None
+                and now - self._last_debug_time < self._debug_period_sec):
+            return
+
+        self._last_debug_time = now
+        self._debug_transition = None
+        data = self._latest_obstacles or {}
+        fused = fused or data.get('fused', {})
+        lidar = data.get('lidar', {})
+        depth = data.get('depth', {})
+        tof = data.get('tof', {})
+        ages = data.get('ages', {})
+        source = '+'.join(fused.get('source', [])) or 'none'
+
+        front = _finite_or_inf(fused.get('front_distance'))
+        left = _finite_or_inf(fused.get('left_distance'))
+        right = _finite_or_inf(fused.get('right_distance'))
+        rear = _finite_or_inf(fused.get('rear_distance'))
+        gap_angle = target.angle if target else _finite_or_inf(
+            fused.get('best_gap_angle')
+        )
+        gap_angle_deg = (
+            f'{math.degrees(gap_angle):.1f}deg'
+            if math.isfinite(gap_angle)
+            else 'none'
+        )
+        gap_width = int(fused.get('best_gap_width', 0) or 0)
+
+        transition_text = transition or f'{self._state}->same'
+        self.get_logger().warn(
+            'OBS_DEBUG '
+            f'trans={transition_text} reason={reason} state={self._state} '
+            f'flags(blocked={bool(fused.get("blocked", False))}, '
+            f'emergency={bool(fused.get("emergency", False))}, '
+            f'dead_end={bool(fused.get("dead_end", False))}, '
+            f'dynamic={bool(fused.get("dynamic_obstacle", False))}) '
+            f'src={source} '
+            f'fused(front={_fmt_m(front)}, left={_fmt_m(left)}, '
+            f'right={_fmt_m(right)}, rear={_fmt_m(rear)}) '
+            f'lidar(front_min={_fmt_opt_m(lidar.get("front_min"))}, '
+            f'front_mean={_fmt_opt_m(lidar.get("front_mean"))}, '
+            f'left={_fmt_opt_m(lidar.get("left_mean"))}, '
+            f'right={_fmt_opt_m(lidar.get("right_mean"))}) '
+            f'depth(front={_fmt_opt_m(depth.get("front_min"))}, '
+            f'left={_fmt_opt_m(depth.get("left_min"))}, '
+            f'right={_fmt_opt_m(depth.get("right_min"))}) '
+            f'tof(range={_fmt_opt_m(tof.get("range"))}) '
+            f'gap(angle={gap_angle_deg}, width={gap_width}) '
+            f'cmd(x={twist.linear.x:.2f}, z={twist.angular.z:.2f}) '
+            f'ages(scan={_fmt_age(ages.get("scan"))}, '
+            f'depth={_fmt_age(ages.get("depth"))}, '
+            f'tof={_fmt_age(ages.get("tof"))})'
         )
 
     @staticmethod

@@ -57,6 +57,8 @@ obstacle_avoidance:
     wander_enabled: true
     wander_interval_sec: 4.0
     wander_angular_speed: 0.18
+    debug_decisions: true
+    debug_period_sec: 1.0
 
 obstacle_trial_logger:
   ros__parameters:
