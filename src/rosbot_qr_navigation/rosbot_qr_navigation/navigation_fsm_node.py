@@ -50,10 +50,16 @@ DEFAULT_TURN_90_SEC = (math.pi / 2) / DEFAULT_TURN_SPEED
 DEFAULT_TURN_180_SEC = math.pi / DEFAULT_TURN_SPEED
 DEFAULT_RECOVERY_SEC = 10.0
 
-DEFAULT_OBSTACLE_DISTANCE = 0.45
-DEFAULT_OBSTACLE_FRONT_ANGLE_DEG = 30.0
+DEFAULT_OBSTACLE_DISTANCE = 0.35
+DEFAULT_OBSTACLE_FRONT_ANGLE_DEG = 20.0
+DEFAULT_OBSTACLE_CONFIRM_SEC = 0.25
+DEFAULT_OBSTACLE_MIN_POINTS = 4
+DEFAULT_OBSTACLE_PERCENTILE = 10.0
 DEFAULT_AVOID_TURN_SEC = DEFAULT_TURN_90_SEC
 DEFAULT_AVOID_FORWARD_SEC = 1.5
+DEFAULT_AVOID_PASS_SEC = 1.2
+DEFAULT_AVOID_RETURN_SEC = DEFAULT_AVOID_FORWARD_SEC
+DEFAULT_AVOID_RETURN_TO_PATH = True
 DEFAULT_AVOID_TURN_DIRECTION = 1.0
 DEFAULT_CONTINUOUS_OBSTACLE_AVOIDANCE = True
 DEFAULT_AVOID_SIDE_SECTOR_DEG = 70.0
@@ -92,6 +98,14 @@ def _as_bool(value) -> bool:
     return bool(value)
 
 
+def _as_float(value) -> float:
+    return float(value)
+
+
+def _as_int(value) -> int:
+    return int(float(value))
+
+
 class NavigationFSMNode(Node):
 
     def __init__(self):
@@ -114,8 +128,14 @@ class NavigationFSMNode(Node):
             'obstacle_front_angle_deg',
             DEFAULT_OBSTACLE_FRONT_ANGLE_DEG,
         )
+        self.declare_parameter('obstacle_confirm_sec', DEFAULT_OBSTACLE_CONFIRM_SEC)
+        self.declare_parameter('obstacle_min_points', DEFAULT_OBSTACLE_MIN_POINTS)
+        self.declare_parameter('obstacle_percentile', DEFAULT_OBSTACLE_PERCENTILE)
         self.declare_parameter('avoid_turn_sec', DEFAULT_AVOID_TURN_SEC)
         self.declare_parameter('avoid_forward_sec', DEFAULT_AVOID_FORWARD_SEC)
+        self.declare_parameter('avoid_pass_sec', DEFAULT_AVOID_PASS_SEC)
+        self.declare_parameter('avoid_return_sec', DEFAULT_AVOID_RETURN_SEC)
+        self.declare_parameter('avoid_return_to_path', DEFAULT_AVOID_RETURN_TO_PATH)
         self.declare_parameter('avoid_turn_direction', DEFAULT_AVOID_TURN_DIRECTION)
         self.declare_parameter(
             'continuous_obstacle_avoidance',
@@ -137,46 +157,76 @@ class NavigationFSMNode(Node):
         self.declare_parameter('cmd_vel_frame_id', DEFAULT_CMD_VEL_FRAME_ID)
         self.declare_parameter('stop_after_turn', DEFAULT_STOP_AFTER_TURN)
 
-        self.cruise_speed = self.get_parameter('cruise_speed').value
-        self.slow_speed = self.get_parameter('slow_speed').value
-        self.speed_step = self.get_parameter('speed_step').value
-        self.max_speed = self.get_parameter('max_speed').value
-        self.min_speed = self.get_parameter('min_speed').value
-        self.turn_speed = self.get_parameter('turn_speed').value
-        self.turn_90_sec = self.get_parameter('turn_90_sec').value
-        self.turn_180_sec = self.get_parameter('turn_180_sec').value
-        self.recovery_sec = self.get_parameter('recovery_sec').value
+        self.cruise_speed = _as_float(self.get_parameter('cruise_speed').value)
+        self.slow_speed = _as_float(self.get_parameter('slow_speed').value)
+        self.speed_step = _as_float(self.get_parameter('speed_step').value)
+        self.max_speed = _as_float(self.get_parameter('max_speed').value)
+        self.min_speed = _as_float(self.get_parameter('min_speed').value)
+        self.turn_speed = _as_float(self.get_parameter('turn_speed').value)
+        self.turn_90_sec = _as_float(self.get_parameter('turn_90_sec').value)
+        self.turn_180_sec = _as_float(self.get_parameter('turn_180_sec').value)
+        self.recovery_sec = _as_float(self.get_parameter('recovery_sec').value)
         cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
         start_state = self.get_parameter('start_state').value
         scan_topic = self.get_parameter('scan_topic').value
 
-        self.obstacle_distance = self.get_parameter('obstacle_distance').value
-        self.obstacle_front_angle = math.radians(
-            self.get_parameter('obstacle_front_angle_deg').value
+        self.obstacle_distance = _as_float(
+            self.get_parameter('obstacle_distance').value
         )
-        self.avoid_turn_sec = self.get_parameter('avoid_turn_sec').value
-        self.avoid_forward_sec = self.get_parameter('avoid_forward_sec').value
-        self.default_avoid_turn_direction = self.get_parameter(
-            'avoid_turn_direction'
-        ).value
+        self.obstacle_front_angle = math.radians(
+            _as_float(self.get_parameter('obstacle_front_angle_deg').value)
+        )
+        self.obstacle_confirm_sec = _as_float(
+            self.get_parameter('obstacle_confirm_sec').value
+        )
+        self.obstacle_min_points = max(
+            1,
+            _as_int(self.get_parameter('obstacle_min_points').value),
+        )
+        self.obstacle_percentile = max(
+            0.0,
+            min(100.0, _as_float(self.get_parameter('obstacle_percentile').value)),
+        )
+        self.avoid_turn_sec = _as_float(self.get_parameter('avoid_turn_sec').value)
+        self.avoid_forward_sec = _as_float(
+            self.get_parameter('avoid_forward_sec').value
+        )
+        self.avoid_pass_sec = _as_float(self.get_parameter('avoid_pass_sec').value)
+        self.avoid_return_sec = _as_float(
+            self.get_parameter('avoid_return_sec').value
+        )
+        self.avoid_return_to_path = _as_bool(
+            self.get_parameter('avoid_return_to_path').value
+        )
+        self.default_avoid_turn_direction = _as_float(
+            self.get_parameter('avoid_turn_direction').value
+        )
         self.continuous_obstacle_avoidance = _as_bool(
             self.get_parameter('continuous_obstacle_avoidance').value
         )
         self.avoid_side_sector_rad = math.radians(
-            self.get_parameter('avoid_side_sector_deg').value
+            _as_float(self.get_parameter('avoid_side_sector_deg').value)
         )
-        self.avoid_retry_limit = int(self.get_parameter('avoid_retry_limit').value)
-        self.sensor_stale_sec = float(self.get_parameter('sensor_stale_sec').value)
+        self.avoid_retry_limit = _as_int(self.get_parameter('avoid_retry_limit').value)
+        self.sensor_stale_sec = _as_float(self.get_parameter('sensor_stale_sec').value)
 
-        self.tof_emergency_dist = self.get_parameter('tof_emergency_dist').value
+        self.tof_emergency_dist = _as_float(
+            self.get_parameter('tof_emergency_dist').value
+        )
         self.use_imu_for_turns = _as_bool(self.get_parameter('use_imu_for_turns').value)
         self.cmd_vel_stamped = _as_bool(self.get_parameter('cmd_vel_stamped').value)
         self.cmd_vel_frame_id = self.get_parameter('cmd_vel_frame_id').value
         self.stop_after_turn = _as_bool(self.get_parameter('stop_after_turn').value)
-        self.depth_obstacle_dist = self.get_parameter('depth_obstacle_dist').value
-        self.depth_center_fraction = self.get_parameter('depth_center_fraction').value
-        self.wall_follow_kp = self.get_parameter('wall_follow_kp').value
-        self.wall_sector_rad = math.radians(self.get_parameter('wall_sector_deg').value)
+        self.depth_obstacle_dist = _as_float(
+            self.get_parameter('depth_obstacle_dist').value
+        )
+        self.depth_center_fraction = _as_float(
+            self.get_parameter('depth_center_fraction').value
+        )
+        self.wall_follow_kp = _as_float(self.get_parameter('wall_follow_kp').value)
+        self.wall_sector_rad = math.radians(
+            _as_float(self.get_parameter('wall_sector_deg').value)
+        )
 
         self._current_speed = self.cruise_speed
         self._state = start_state
@@ -184,6 +234,7 @@ class NavigationFSMNode(Node):
         self._turn_direction = 0.0
         self._turn_end_time = 0.0
         self._turn_target_rad = 0.0   # IMU-mode: target accumulated yaw
+        self._turn_next_state = STOPPED
         self._last_command_time = time.monotonic()
 
         self._queued_actions = deque()
@@ -194,6 +245,8 @@ class NavigationFSMNode(Node):
         self._avoid_step_end_time = 0.0
         self._avoid_turn_direction = self.default_avoid_turn_direction
         self._avoid_retry_count = 0
+        self._obstacle_first_seen_time: float | None = None
+        self._obstacle_confirmed = False
 
         # IMU yaw tracking
         self._current_imu_yaw: float | None = None
@@ -236,7 +289,8 @@ class NavigationFSMNode(Node):
             f'Navigation FSM ready. Initial state: {self._state}. '
             f'cmd_vel -> {cmd_vel_topic} ({vel_msg_type.__name__}), '
             f'scan -> {scan_topic}, '
-            f'IMU turns: {self.use_imu_for_turns}'
+            f'IMU turns: {self.use_imu_for_turns}, '
+            'QR turns finish in STOPPED'
         )
 
     def _on_command(self, msg: String):
@@ -267,7 +321,7 @@ class NavigationFSMNode(Node):
             self._transition(STOPPED)
 
         elif cmd == 'GO':
-            if self._state == TURNING and self.stop_after_turn:
+            if self._state == TURNING and self._turn_next_state == STOPPED:
                 if 'GO' not in self._queued_actions:
                     self._queued_actions.appendleft('GO')
                     self._publish_event('QUEUE', 'GO')
@@ -284,13 +338,13 @@ class NavigationFSMNode(Node):
                 self._transition(DRIVING)
 
         elif cmd == 'TURN_LEFT':
-            self._start_turn(+1.0, self.turn_90_sec)
+            self._start_turn(+1.0, self.turn_90_sec, next_state=STOPPED)
 
         elif cmd == 'TURN_RIGHT':
-            self._start_turn(-1.0, self.turn_90_sec)
+            self._start_turn(-1.0, self.turn_90_sec, next_state=STOPPED)
 
         elif cmd == 'U_TURN':
-            self._start_turn(+1.0, self.turn_180_sec)
+            self._start_turn(+1.0, self.turn_180_sec, next_state=STOPPED)
 
         elif cmd == 'SPEED_UP':
             self._current_speed = min(
@@ -322,10 +376,11 @@ class NavigationFSMNode(Node):
         )
         self._execute_command(next_cmd)
 
-    def _start_turn(self, direction: float, duration: float):
+    def _start_turn(self, direction: float, duration: float, next_state: str = STOPPED):
         self._avoid_steps.clear()
         self._turn_direction = direction
         self._turn_end_time = time.monotonic() + duration
+        self._turn_next_state = next_state
         # IMU mode: record start yaw and target angle
         if self.use_imu_for_turns and self._imu_active:
             self._imu_yaw_start = self._current_imu_yaw
@@ -418,43 +473,70 @@ class NavigationFSMNode(Node):
 
     def _front_obstacle_detected(self, log: bool = True) -> bool:
         """Fuse LIDAR + depth camera for front-obstacle check (Project C sensor fusion)."""
-        lidar_dist = self._lidar_front_min()
+        lidar_dist, lidar_close_points = self._lidar_front_distance()
         depth_dist = (
             self._depth_front_dist
             if self._sensor_recent(self._last_depth_time)
             else math.inf
         )
 
-        # Obstacle confirmed if either sensor triggers
-        blocked_lidar = lidar_dist < self.obstacle_distance
+        # Require multiple close LIDAR rays and a short confirmation window so
+        # one noisy ray or a wall edge does not kick the robot into avoidance.
+        blocked_lidar = (
+            lidar_dist < self.obstacle_distance
+            and lidar_close_points >= self.obstacle_min_points
+        )
         blocked_depth = depth_dist < self.depth_obstacle_dist
+        raw_blocked = blocked_lidar or blocked_depth
 
-        if blocked_lidar or blocked_depth:
+        now = time.monotonic()
+        if raw_blocked:
+            if self._obstacle_first_seen_time is None:
+                self._obstacle_first_seen_time = now
+            confirmed = (
+                self.obstacle_confirm_sec <= 0.0
+                or now - self._obstacle_first_seen_time >= self.obstacle_confirm_sec
+            )
+        else:
+            self._obstacle_first_seen_time = None
+            self._obstacle_confirmed = False
+            return False
+
+        if confirmed:
             source = []
             if blocked_lidar:
-                source.append(f'LIDAR={lidar_dist:.2f}m')
+                source.append(
+                    f'LIDAR={lidar_dist:.2f}m/{lidar_close_points}pts'
+                )
             if blocked_depth:
                 source.append(f'depth={depth_dist:.2f}m')
-            if log:
+            if log and not self._obstacle_confirmed:
                 self.get_logger().warn(
                     f'Obstacle detected [{", ".join(source)}]. Starting avoidance.'
                 )
+            self._obstacle_confirmed = True
             return True
         return False
 
-    def _lidar_front_min(self) -> float:
-        """Return minimum range in the front cone from the latest LaserScan."""
+    def _lidar_front_distance(self) -> tuple[float, int]:
+        """Return robust front-cone distance and close-ray count."""
         scan = self._latest_scan
         if scan is None or not self._sensor_recent(self._last_scan_time):
-            return math.inf
-        min_r = math.inf
+            return math.inf, 0
+        values = []
+        close_points = 0
         angle = scan.angle_min
         for value in scan.ranges:
             if -self.obstacle_front_angle <= angle <= self.obstacle_front_angle:
                 if math.isfinite(value) and scan.range_min <= value <= scan.range_max:
-                    min_r = min(min_r, value)
+                    values.append(value)
+                    if value < self.obstacle_distance:
+                        close_points += 1
             angle += scan.angle_increment
-        return min_r
+        if not values:
+            return math.inf, 0
+        distance = float(np.percentile(values, self.obstacle_percentile))
+        return distance, close_points
 
     def _sector_mean(self, scan: LaserScan, angle_lo: float, angle_hi: float) -> float:
         """Mean valid range in an angular sector (radians). Returns inf if no data."""
@@ -520,11 +602,19 @@ class NavigationFSMNode(Node):
             self._avoid_retry_count = 0
 
         self._avoid_turn_direction = self._choose_avoid_direction()
-        self._avoid_steps = deque([
+        avoid_steps = [
             ('turn_away', self.avoid_turn_sec),
-            ('forward', self.avoid_forward_sec),
-            ('turn_back', self.avoid_turn_sec),
-        ])
+            ('shift_out', self.avoid_forward_sec),
+            ('turn_parallel', self.avoid_turn_sec),
+        ]
+        if self.avoid_return_to_path:
+            avoid_steps.extend([
+                ('pass_obstacle', self.avoid_pass_sec),
+                ('turn_in', self.avoid_turn_sec),
+                ('shift_back', self.avoid_return_sec),
+                ('turn_align', self.avoid_turn_sec),
+            ])
+        self._avoid_steps = deque(avoid_steps)
         direction_label = 'left' if self._avoid_turn_direction > 0.0 else 'right'
         self.get_logger().warn(
             f'Starting obstacle avoidance ({reason}); turning {direction_label} first.'
@@ -568,11 +658,11 @@ class NavigationFSMNode(Node):
             self._start_next_avoid_step()
 
         twist = Twist()
-        if self._avoid_step == 'turn_away':
+        if self._avoid_step in ('turn_away', 'turn_align'):
             twist.angular.z = self._avoid_turn_direction * self.turn_speed
-        elif self._avoid_step == 'forward':
+        elif self._avoid_step in ('shift_out', 'pass_obstacle', 'shift_back'):
             twist.linear.x = self.slow_speed
-        elif self._avoid_step == 'turn_back':
+        elif self._avoid_step in ('turn_parallel', 'turn_in'):
             twist.angular.z = -self._avoid_turn_direction * self.turn_speed
         return twist
 
@@ -649,12 +739,11 @@ class NavigationFSMNode(Node):
 
         elif self._state == TURNING:
             if self._turn_complete(now):
-                next_state = STOPPED if self.stop_after_turn else DRIVING
-                self._transition(next_state)
+                self._transition(self._turn_next_state)
                 self._maybe_start_next_queued_action(
-                    allow_when_stopped=self.stop_after_turn
+                    allow_when_stopped=self._turn_next_state == STOPPED
                 )
-                if self._state == DRIVING and not self.stop_after_turn:
+                if self._state == DRIVING:
                     twist.linear.x = self._current_speed
             else:
                 twist.angular.z = self._turn_direction * self.turn_speed

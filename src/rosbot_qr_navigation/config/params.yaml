@@ -24,16 +24,22 @@ navigation_fsm:
     max_speed:     0.40                    # m/s  – upper clamp
     min_speed:     0.05                    # m/s  – lower clamp
     turn_speed:    0.50                    # rad/s – angular velocity during turns
-    stop_after_turn: true                  # true = TURN_LEFT/RIGHT/U_TURN stop after rotating
+    stop_after_turn: true                  # kept for compatibility; QR turns always stop
     # Calibrate these on the real ROSbot by timing a 90° turn on a flat surface:
     turn_90_sec:   3.14                    # seconds for a 90° open-loop turn
     turn_180_sec:  6.28                    # seconds for a 180° open-loop turn
     recovery_sec:  10.0                    # enter RECOVERING after this many seconds without QR
     scan_topic: /scan                      # LaserScan topic for obstacle checks
-    obstacle_distance: 0.45                # meters; front obstacle threshold
-    obstacle_front_angle_deg: 30.0         # +/- front cone checked for obstacles
+    obstacle_distance: 0.35                # meters; front obstacle threshold
+    obstacle_front_angle_deg: 20.0         # +/- front cone checked for obstacles
+    obstacle_confirm_sec: 0.25             # seconds close readings must persist
+    obstacle_min_points: 4                 # minimum close LIDAR rays before avoiding
+    obstacle_percentile: 10.0              # robust front distance percentile
     avoid_turn_sec: 3.14                   # timed 90 degree turn away/back
     avoid_forward_sec: 1.5                 # sidestep duration before turning back
+    avoid_pass_sec: 1.2                    # forward time after re-aligning past obstacle
+    avoid_return_sec: 1.5                  # timed return from side-step to original path
+    avoid_return_to_path: true             # merge back instead of staying on offset path
     avoid_turn_direction: 1.0              # fallback only; +1 left-first, -1 right-first
     continuous_obstacle_avoidance: true    # while DRIVING, auto side-step around obstacles
     avoid_side_sector_deg: 70.0            # side sector used to choose clearer avoidance side

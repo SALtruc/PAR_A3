@@ -50,9 +50,9 @@ current action. Example: `AND_TURN_LEFT`, `AND_U_TURN`, `AND_SPEED_UP`.
 Immediate commands still interrupt whatever is running; queued commands run FIFO
 after the current turn/avoidance action finishes.
 
-With `stop_after_turn: true`, `GO` received during a turn waits until the turn
-finishes. The FSM publishes a stop command first, then resumes driving on the
-next control tick.
+Turn commands always finish in `STOPPED`. If `GO` is received during a turn, it
+waits until the turn finishes; the FSM publishes a stop command first, then
+resumes driving on the next control tick.
 
 The FSM also includes a Project C-style obstacle avoidance add-on. While driving,
 front obstacles detected by LIDAR or the depth camera automatically trigger a
@@ -326,7 +326,8 @@ default `cmd_vel_stamped:=true`.
 
 If obstacle avoidance never triggers, confirm `/scan` is publishing and tune
 `obstacle_distance` in `config/params.yaml`. If it avoids too early, reduce
-`obstacle_distance` or `depth_obstacle_dist`; if it gets too close, increase
+`obstacle_distance`, increase `obstacle_confirm_sec` or `obstacle_min_points`,
+or reduce `depth_obstacle_dist`; if it gets too close, increase
 them slightly.
 
 ### Test without a robot (webcam)
@@ -392,11 +393,16 @@ Key values to calibrate on the real robot:
 | `cruise_speed` | 0.20 m/s | Forward driving speed |
 | `turn_90_sec`  | 3.14 s   | **Calibrate** by timing a 90° turn |
 | `turn_180_sec` | 6.28 s   | **Calibrate** by timing a 180° turn |
-| `stop_after_turn` | true | Stop after a turn command instead of driving forward automatically |
+| `stop_after_turn` | true | Compatibility option; QR turn commands always stop after rotating |
 | `debounce_sec` | 2.0 s    | Suppresses duplicate QR re-triggers |
 | `recovery_sec` | 10.0 s   | Seconds without QR before RECOVERING |
-| `obstacle_distance` | 0.45 m | Driving/GO starts avoidance if `/scan` sees an obstacle closer than this |
-| `avoid_forward_sec` | 1.5 s | Timed side-step forward during obstacle avoidance |
+| `obstacle_distance` | 0.35 m | Driving/GO starts avoidance if several front `/scan` rays stay closer than this |
+| `obstacle_confirm_sec` | 0.25 s | Close readings must persist before avoidance starts |
+| `obstacle_min_points` | 4 | Minimum close LIDAR rays before avoidance starts |
+| `avoid_forward_sec` | 1.5 s | Timed side-step outward during obstacle avoidance |
+| `avoid_pass_sec` | 1.2 s | Timed forward motion after re-aligning past the obstacle |
+| `avoid_return_sec` | 1.5 s | Timed side-step back toward the original path |
+| `avoid_return_to_path` | true | Merge back after the side-step instead of staying on the offset path |
 | `continuous_obstacle_avoidance` | true | Trigger avoidance automatically while driving |
 | `avoid_side_sector_deg` | 70.0° | LIDAR side sector used to choose the clearer avoidance side |
 | `avoid_retry_limit` | 3 | Stop safely after repeated failed avoidance attempts |
