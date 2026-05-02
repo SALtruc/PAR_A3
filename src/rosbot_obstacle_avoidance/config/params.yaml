@@ -4,22 +4,22 @@
 obstacle_perception:
   ros__parameters:
     scan_topic: /scan_filtered
-    depth_topic: /oak/stereo/image_raw
+    depth_topic: /camera/depth/image_rect_raw
     pointcloud_topic: /oak/points
     tof_topic: /range
     tof_topics: /range/fl,/range/fr,/range/rl,/range/rr
     obstacle_topic: /obstacle_representation
 
     use_lidar: true
-    use_depth: true
-    use_pointcloud: false
+    use_depth: false
+    use_pointcloud: true
     use_tof: true
     publish_hz: 20.0
 
     # LIDAR safety/perception thresholds
     emergency_distance: 0.14
     obstacle_distance: 0.22
-    clear_distance: 0.28
+    clear_distance: 0.35
     front_center_angle_deg: 0.0
     front_angle_deg: 28.0
     front_percentile: 15.0
@@ -97,11 +97,17 @@ obstacle_avoidance:
     backup_sec: 0.70
 
     # Main thresholds
-    clear_distance: 0.28
+    clear_distance: 0.35
     stop_distance: 0.15
     dodge_clearance: 0.25
     rear_stop_distance: 0.20
+    side_guard_distance: 0.07
+    side_escape_distance: 0.12
+    side_escape_angular_speed: 0.22
+    side_escape_sec: 0.45
+    dynamic_observe_distance: 0.80
     observe_frames: 8
+    clear_observe_frames: 3
 
     # Keep false battery stop off during lab testing unless your battery topic is reliable.
     require_battery_ok: false

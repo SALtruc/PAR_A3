@@ -4,12 +4,22 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
     pkg = FindPackageShare('rosbot_obstacle_avoidance')
     config = PathJoinSubstitution([pkg, 'config', 'params.yaml'])
+
+    def as_bool(name):
+        return ParameterValue(LaunchConfiguration(name), value_type=bool)
+
+    def as_float(name):
+        return ParameterValue(LaunchConfiguration(name), value_type=float)
+
+    def as_int(name):
+        return ParameterValue(LaunchConfiguration(name), value_type=int)
 
     args = [
         DeclareLaunchArgument('scan_topic', default_value='/scan_filtered'),
@@ -31,26 +41,34 @@ def generate_launch_description():
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
         DeclareLaunchArgument('max_speed', default_value='0.10'),
-        DeclareLaunchArgument('emergency_distance', default_value='0.18'),
-        DeclareLaunchArgument('perception_obstacle_distance', default_value='0.45'),
-        DeclareLaunchArgument('perception_clear_distance', default_value='0.60'),
-        DeclareLaunchArgument('obstacle_distance', default_value='0.35'),
-        DeclareLaunchArgument('clear_distance', default_value='0.50'),
-        DeclareLaunchArgument('slow_distance', default_value='0.65'),
-        DeclareLaunchArgument('front_body_offset_m', default_value='0.11'),
-        DeclareLaunchArgument('face_wall_distance', default_value='0.20'),
-        DeclareLaunchArgument('backup_speed', default_value='0.08'),
-        DeclareLaunchArgument('backup_sec', default_value='0.90'),
-        DeclareLaunchArgument('backup_rear_stop_distance', default_value='0.25'),
-        DeclareLaunchArgument('depth_obstacle_distance', default_value='0.55'),
+        DeclareLaunchArgument('emergency_distance', default_value='0.14'),
+        DeclareLaunchArgument('perception_obstacle_distance', default_value='0.22'),
+        DeclareLaunchArgument('perception_clear_distance', default_value='0.35'),
+        DeclareLaunchArgument('clear_distance', default_value='0.35'),
+        DeclareLaunchArgument('stop_distance', default_value='0.15'),
+        DeclareLaunchArgument('dodge_clearance', default_value='0.25'),
+        DeclareLaunchArgument('rear_stop_distance', default_value='0.20'),
+        DeclareLaunchArgument('side_guard_distance', default_value='0.07'),
+        DeclareLaunchArgument('side_escape_distance', default_value='0.12'),
+        DeclareLaunchArgument('side_escape_angular_speed', default_value='0.22'),
+        DeclareLaunchArgument('side_escape_sec', default_value='0.45'),
+        DeclareLaunchArgument('observe_speed', default_value='0.0'),
+        DeclareLaunchArgument('dodge_forward_speed', default_value='0.045'),
+        DeclareLaunchArgument('dodge_angular_speed', default_value='0.25'),
+        DeclareLaunchArgument('rotation_angular_speed', default_value='0.35'),
+        DeclareLaunchArgument('backup_speed', default_value='0.07'),
+        DeclareLaunchArgument('backup_sec', default_value='0.70'),
+        DeclareLaunchArgument('dodge_step_deg', default_value='30.0'),
+        DeclareLaunchArgument('rotation_step_deg', default_value='70.0'),
+        DeclareLaunchArgument('max_rotation_attempts', default_value='3'),
+        DeclareLaunchArgument('observe_frames', default_value='8'),
+        DeclareLaunchArgument('clear_observe_frames', default_value='3'),
+        DeclareLaunchArgument('dynamic_observe_distance', default_value='0.80'),
+        DeclareLaunchArgument('depth_obstacle_distance', default_value='0.45'),
         DeclareLaunchArgument('front_center_angle_deg', default_value='0.0'),
         DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
-        DeclareLaunchArgument('obstacle_hold_sec', default_value='0.35'),
-        DeclareLaunchArgument('clear_confirm_sec', default_value='0.20'),
-        DeclareLaunchArgument('dynamic_check_frames', default_value='4'),
-        DeclareLaunchArgument('dynamic_clear_frames', default_value='2'),
-        DeclareLaunchArgument('side_balance_distance', default_value='0.45'),
-        DeclareLaunchArgument('side_protect_distance', default_value='0.12'),
+        DeclareLaunchArgument('obstacle_hold_sec', default_value='0.15'),
+        DeclareLaunchArgument('clear_confirm_sec', default_value='0.10'),
         DeclareLaunchArgument('robot_half_width_m', default_value='0.13'),
         DeclareLaunchArgument('front_path_half_width_m', default_value='0.18'),
         DeclareLaunchArgument('side_guard_forward_m', default_value='0.35'),
@@ -79,41 +97,27 @@ def generate_launch_description():
                 'pointcloud_topic': LaunchConfiguration('pointcloud_topic'),
                 'tof_topic': LaunchConfiguration('tof_topic'),
                 'tof_topics': LaunchConfiguration('tof_topics'),
-                'use_lidar': LaunchConfiguration('use_lidar'),
-                'use_depth': LaunchConfiguration('use_depth'),
-                'use_pointcloud': LaunchConfiguration('use_pointcloud'),
-                'use_tof': LaunchConfiguration('use_tof'),
+                'use_lidar': as_bool('use_lidar'),
+                'use_depth': as_bool('use_depth'),
+                'use_pointcloud': as_bool('use_pointcloud'),
+                'use_tof': as_bool('use_tof'),
                 'obstacle_topic': LaunchConfiguration('obstacle_topic'),
-                'emergency_distance': LaunchConfiguration('emergency_distance'),
-                'obstacle_distance': LaunchConfiguration(
-                    'perception_obstacle_distance'
-                ),
-                'clear_distance': LaunchConfiguration('perception_clear_distance'),
-                'front_center_angle_deg': LaunchConfiguration(
-                    'front_center_angle_deg'
-                ),
-                'robot_half_width_m': LaunchConfiguration('robot_half_width_m'),
-                'front_path_half_width_m': LaunchConfiguration(
-                    'front_path_half_width_m'
-                ),
-                'side_guard_forward_m': LaunchConfiguration(
-                    'side_guard_forward_m'
-                ),
-                'side_guard_rear_m': LaunchConfiguration('side_guard_rear_m'),
-                'side_percentile': LaunchConfiguration('side_percentile'),
-                'front_percentile': LaunchConfiguration('front_percentile'),
-                'front_close_min_rays': LaunchConfiguration('front_close_min_rays'),
-                'front_close_min_ratio': LaunchConfiguration(
-                    'front_close_min_ratio'
-                ),
-                'depth_obstacle_distance': LaunchConfiguration(
-                    'depth_obstacle_distance'
-                ),
-                'dynamic_closing_speed': LaunchConfiguration(
-                    'dynamic_closing_speed'
-                ),
-                'obstacle_hold_sec': LaunchConfiguration('obstacle_hold_sec'),
-                'clear_confirm_sec': LaunchConfiguration('clear_confirm_sec'),
+                'emergency_distance': as_float('emergency_distance'),
+                'obstacle_distance': as_float('perception_obstacle_distance'),
+                'clear_distance': as_float('perception_clear_distance'),
+                'front_center_angle_deg': as_float('front_center_angle_deg'),
+                'robot_half_width_m': as_float('robot_half_width_m'),
+                'front_path_half_width_m': as_float('front_path_half_width_m'),
+                'side_guard_forward_m': as_float('side_guard_forward_m'),
+                'side_guard_rear_m': as_float('side_guard_rear_m'),
+                'side_percentile': as_float('side_percentile'),
+                'front_percentile': as_float('front_percentile'),
+                'front_close_min_rays': as_int('front_close_min_rays'),
+                'front_close_min_ratio': as_float('front_close_min_ratio'),
+                'depth_obstacle_distance': as_float('depth_obstacle_distance'),
+                'dynamic_closing_speed': as_float('dynamic_closing_speed'),
+                'obstacle_hold_sec': as_float('obstacle_hold_sec'),
+                'clear_confirm_sec': as_float('clear_confirm_sec'),
             },
         ],
         output='screen',
@@ -129,32 +133,34 @@ def generate_launch_description():
                 'obstacle_topic': LaunchConfiguration('obstacle_topic'),
                 'battery_topic': LaunchConfiguration('battery_topic'),
                 'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
-                'cmd_vel_stamped': LaunchConfiguration('cmd_vel_stamped'),
-                'max_speed': LaunchConfiguration('max_speed'),
-                'obstacle_distance': LaunchConfiguration('obstacle_distance'),
-                'clear_distance': LaunchConfiguration('clear_distance'),
-                'slow_distance': LaunchConfiguration('slow_distance'),
-                'front_body_offset_m': LaunchConfiguration('front_body_offset_m'),
-                'face_wall_distance': LaunchConfiguration('face_wall_distance'),
-                'backup_speed': LaunchConfiguration('backup_speed'),
-                'backup_sec': LaunchConfiguration('backup_sec'),
-                'backup_rear_stop_distance': LaunchConfiguration(
-                    'backup_rear_stop_distance'
-                ),
-                'dynamic_check_frames': LaunchConfiguration('dynamic_check_frames'),
-                'dynamic_clear_frames': LaunchConfiguration('dynamic_clear_frames'),
-                'side_balance_distance': LaunchConfiguration(
-                    'side_balance_distance'
-                ),
-                'side_protect_distance': LaunchConfiguration(
-                    'side_protect_distance'
-                ),
-                'require_battery_ok': LaunchConfiguration('require_battery_ok'),
-                'min_battery_voltage': LaunchConfiguration('min_battery_voltage'),
-                'warn_battery_voltage': LaunchConfiguration('warn_battery_voltage'),
-                'battery_stale_sec': LaunchConfiguration('battery_stale_sec'),
-                'debug_decisions': LaunchConfiguration('debug_decisions'),
-                'debug_period_sec': LaunchConfiguration('debug_period_sec'),
+                'cmd_vel_stamped': as_bool('cmd_vel_stamped'),
+                'max_speed': as_float('max_speed'),
+                'observe_speed': as_float('observe_speed'),
+                'dodge_forward_speed': as_float('dodge_forward_speed'),
+                'dodge_angular_speed': as_float('dodge_angular_speed'),
+                'rotation_angular_speed': as_float('rotation_angular_speed'),
+                'backup_speed': as_float('backup_speed'),
+                'clear_distance': as_float('clear_distance'),
+                'stop_distance': as_float('stop_distance'),
+                'dodge_clearance': as_float('dodge_clearance'),
+                'rear_stop_distance': as_float('rear_stop_distance'),
+                'side_guard_distance': as_float('side_guard_distance'),
+                'side_escape_distance': as_float('side_escape_distance'),
+                'side_escape_angular_speed': as_float('side_escape_angular_speed'),
+                'side_escape_sec': as_float('side_escape_sec'),
+                'dynamic_observe_distance': as_float('dynamic_observe_distance'),
+                'observe_frames': as_int('observe_frames'),
+                'clear_observe_frames': as_int('clear_observe_frames'),
+                'backup_sec': as_float('backup_sec'),
+                'dodge_step_deg': as_float('dodge_step_deg'),
+                'rotation_step_deg': as_float('rotation_step_deg'),
+                'max_rotation_attempts': as_int('max_rotation_attempts'),
+                'require_battery_ok': as_bool('require_battery_ok'),
+                'min_battery_voltage': as_float('min_battery_voltage'),
+                'warn_battery_voltage': as_float('warn_battery_voltage'),
+                'battery_stale_sec': as_float('battery_stale_sec'),
+                'debug_decisions': as_bool('debug_decisions'),
+                'debug_period_sec': as_float('debug_period_sec'),
             },
         ],
         output='screen',

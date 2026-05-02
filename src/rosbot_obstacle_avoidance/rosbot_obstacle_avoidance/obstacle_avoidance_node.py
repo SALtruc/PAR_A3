@@ -8,7 +8,7 @@ Behaviour goal:
 - If the object remains: dodge gently toward the clearer side.
 - If it is too close or a true dead-end: backup, then rotate to recover.
 
-States: DRIVE | OBSERVE | DODGE | BACKUP | ROTATE | STOPPED
+States: DRIVE | OBSERVE | DODGE | SIDE_ESCAPE | BACKUP | ROTATE | STOPPED
 """
 
 import json
@@ -29,6 +29,7 @@ DODGE = 'DODGE'
 BACKUP = 'BACKUP'
 ROTATE = 'ROTATE'
 STOPPED = 'STOPPED'
+SIDE_ESCAPE = 'SIDE_ESCAPE'
 
 
 def _finite(value) -> float:
@@ -60,6 +61,7 @@ class Snap:
     rear: float
     dynamic: bool
     emergency: bool
+    tof_emergency: bool
     lidar_ok: bool
     depth_ok: bool
 
@@ -91,9 +93,15 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('stop_distance', 0.15)
         self.declare_parameter('dodge_clearance', 0.25)
         self.declare_parameter('rear_stop_distance', 0.20)
+        self.declare_parameter('side_guard_distance', 0.07)
+        self.declare_parameter('side_escape_distance', 0.12)
+        self.declare_parameter('side_escape_angular_speed', 0.22)
+        self.declare_parameter('side_escape_sec', 0.45)
+        self.declare_parameter('dynamic_observe_distance', 0.80)
 
         # Timings / behaviour limits
         self.declare_parameter('observe_frames', 8)
+        self.declare_parameter('clear_observe_frames', 3)
         self.declare_parameter('backup_sec', 0.70)
         self.declare_parameter('dodge_step_deg', 30.0)
         self.declare_parameter('rotation_step_deg', 70.0)
@@ -128,8 +136,14 @@ class ObstacleAvoidanceNode(Node):
         self._stop = float(p('stop_distance').value)
         self._dodge_clear = float(p('dodge_clearance').value)
         self._rear_stop = float(p('rear_stop_distance').value)
+        self._side_guard = float(p('side_guard_distance').value)
+        self._side_escape = float(p('side_escape_distance').value)
+        self._side_escape_ang = float(p('side_escape_angular_speed').value)
+        self._side_escape_sec = float(p('side_escape_sec').value)
+        self._dynamic_observe = float(p('dynamic_observe_distance').value)
 
         self._observe_frames = max(1, int(p('observe_frames').value))
+        self._clear_observe_frames = max(1, int(p('clear_observe_frames').value))
         self._backup_sec = float(p('backup_sec').value)
         self._dodge_sec = math.radians(float(p('dodge_step_deg').value)) / max(abs(self._dodge_ang), 0.01)
         self._rotate_sec = math.radians(float(p('rotation_step_deg').value)) / max(abs(self._rot_ang), 0.01)
@@ -209,9 +223,9 @@ class ObstacleAvoidanceNode(Node):
         snap = self._snap()
         front = self._effective_front(snap)
 
-        if snap.emergency:
+        if snap.tof_emergency:
             self._set_state(STOPPED)
-            self._log('tof_or_emergency_stop', snap)
+            self._log('tof_emergency_stop', snap)
             self._publish_cmd(twist)
             return
 
@@ -226,6 +240,11 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
+        if self._state == SIDE_ESCAPE and self._handle_side_escape(twist, snap, now):
+            self._log('side_escape', snap)
+            self._publish_cmd(twist)
+            return
+
         if self._state == BACKUP and self._handle_backup(twist, snap, now):
             self._log('backup', snap)
             self._publish_cmd(twist)
@@ -233,6 +252,15 @@ class ObstacleAvoidanceNode(Node):
 
         if self._state == ROTATE and self._handle_rotate(twist, snap, front, now):
             self._log('rotate', snap)
+            self._publish_cmd(twist)
+            return
+
+        # Priority 0: side collision guard. This is not corridor centering;
+        # it only prevents scraping/hitting when one side is extremely close.
+        if self._side_danger(snap):
+            self._start_side_escape(snap)
+            self._handle_side_escape(twist, snap, now)
+            self._log('side_guard_escape', snap)
             self._publish_cmd(twist)
             return
 
@@ -253,7 +281,7 @@ class ObstacleAvoidanceNode(Node):
             return
 
         # Priority 3: suspicious front object = observe first.
-        if front <= self._clear:
+        if self._front_suspicious(snap, front):
             self._start_observe()
             self._handle_observe(twist, snap, front)
             self._log('observe_start', snap)
@@ -283,8 +311,16 @@ class ObstacleAvoidanceNode(Node):
             self._start_backup()
             return True
 
-        # Object disappeared, or LIDAR is suspicious but depth says clear.
-        if front > self._clear or self._depth_confirms_clear(snap):
+        # Object disappeared.
+        if not self._front_suspicious(snap, front):
+            self._set_state(DRIVE)
+            return False
+
+        # LIDAR is suspicious but depth sees a clear path: observe a few frames,
+        # then continue straight instead of rotating immediately.
+        if (
+                self._depth_confirms_clear(snap)
+                and self._observe_count >= self._clear_observe_frames):
             self._set_state(DRIVE)
             return False
 
@@ -324,6 +360,43 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DRIVE)
         return False
 
+
+    def _start_side_escape(self, snap: Snap):
+        # If left is too close, rotate right. If right is too close, rotate left.
+        left_close = math.isfinite(snap.left) and snap.left < self._side_guard
+        right_close = math.isfinite(snap.right) and snap.right < self._side_guard
+
+        if left_close and not right_close:
+            self._turn_dir = -1.0
+        elif right_close and not left_close:
+            self._turn_dir = 1.0
+        else:
+            self._turn_dir = self._clearer_side(snap.left, snap.right)
+
+        self._set_state(SIDE_ESCAPE, self._side_escape_sec)
+
+    def _handle_side_escape(self, twist: Twist, snap: Snap, now: float) -> bool:
+        # Hard front danger still has priority.
+        if self._too_close(snap):
+            self._start_backup()
+            return True
+
+        left_safe = (not math.isfinite(snap.left)) or snap.left >= self._side_escape
+        right_safe = (not math.isfinite(snap.right)) or snap.right >= self._side_escape
+
+        if left_safe and right_safe:
+            self._set_state(DRIVE)
+            return False
+
+        if now < self._state_end:
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_dir * self._side_escape_ang
+            return True
+
+        # Do not keep spinning forever. Try driving slowly after a small escape turn.
+        self._set_state(DRIVE)
+        return False
+
     def _start_backup(self):
         self._rotation_count = 0
         self._set_state(BACKUP, self._backup_sec)
@@ -343,6 +416,10 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(ROTATE, self._rotate_sec)
 
     def _handle_rotate(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
+        if self._too_close(snap):
+            self._start_backup()
+            return True
+
         if front > self._clear or self._depth_confirms_clear(snap):
             self._set_state(DRIVE)
             return False
@@ -392,6 +469,24 @@ class ObstacleAvoidanceNode(Node):
 
         return lidar if math.isfinite(lidar) else math.inf
 
+    def _front_suspicious(self, snap: Snap, front: float) -> bool:
+        lidar_suspicious = (
+            snap.lidar_ok
+            and math.isfinite(snap.front_lidar)
+            and snap.front_lidar <= self._clear
+        )
+        depth_suspicious = (
+            snap.depth_ok
+            and math.isfinite(snap.front_depth)
+            and snap.front_depth <= self._clear
+        )
+        dynamic_suspicious = (
+            snap.dynamic
+            and math.isfinite(front)
+            and front <= self._dynamic_observe
+        )
+        return lidar_suspicious or depth_suspicious or dynamic_suspicious
+
     def _depth_confirms_clear(self, snap: Snap) -> bool:
         return (
             snap.depth_ok
@@ -404,12 +499,12 @@ class ObstacleAvoidanceNode(Node):
         # Hard safety: any confirmed front reading under stop distance.
         lidar_too_close = math.isfinite(snap.front_lidar) and snap.front_lidar <= self._stop
         depth_too_close = math.isfinite(snap.front_depth) and snap.front_depth <= self._stop
-
-        # If depth is available and clearly open, ignore medium LIDAR noise.
-        if self._depth_confirms_clear(snap):
-            return False
-
         return lidar_too_close or depth_too_close
+
+    def _side_danger(self, snap: Snap) -> bool:
+        left_close = math.isfinite(snap.left) and snap.left < self._side_guard
+        right_close = math.isfinite(snap.right) and snap.right < self._side_guard
+        return left_close or right_close
 
     def _dead_end(self, snap: Snap, front: float) -> bool:
         front_blocked = front <= self._clear and not self._depth_confirms_clear(snap)
@@ -432,6 +527,8 @@ class ObstacleAvoidanceNode(Node):
         source = list(fused.get('source', []))
         lidar_ok = bool(lidar.get('available', False))
         depth_ok = bool(depth.get('available', False))
+        emergency = bool(fused.get('emergency', False))
+        tof_emergency = bool(emergency and 'tof' in source)
 
         return Snap(
             front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
@@ -440,7 +537,8 @@ class ObstacleAvoidanceNode(Node):
             right=_finite(fused.get('right_distance')),
             rear=_finite(fused.get('rear_distance')),
             dynamic=bool(fused.get('dynamic_obstacle', False) or depth.get('motion', False)),
-            emergency=bool(fused.get('emergency', False) and ('tof' in source or True)),
+            emergency=emergency,
+            tof_emergency=tof_emergency,
             lidar_ok=lidar_ok,
             depth_ok=depth_ok,
         )
@@ -495,7 +593,7 @@ class ObstacleAvoidanceNode(Node):
             f'dynamic={snap.dynamic} turn={"L" if self._turn_dir > 0 else "R"} '
             f'obs={self._observe_count}'
         )
-        if self._state in (OBSERVE, DODGE, BACKUP, ROTATE):
+        if self._state in (OBSERVE, DODGE, SIDE_ESCAPE, BACKUP, ROTATE):
             self.get_logger().warn(line)
         else:
             self.get_logger().info(line)
