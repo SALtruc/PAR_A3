@@ -2,12 +2,15 @@
 
 obstacle_perception:
   ros__parameters:
-    scan_topic: /scan
+    scan_topic: /scan_filtered
     depth_topic: /camera/depth/image_rect_raw
+    pointcloud_topic: /oak/points
     tof_topic: /range
+    tof_topics: /range/fl,/range/fr,/range/rl,/range/rr
     obstacle_topic: /obstacle_representation
     use_lidar: true
-    use_depth: true
+    use_depth: false
+    use_pointcloud: true
     use_tof: true
     publish_hz: 20.0
 
@@ -23,10 +26,19 @@ obstacle_perception:
     gap_angle_limit_deg: 110.0
     sensor_stale_sec: 1.0
 
-    depth_obstacle_distance: 0.55
+    depth_obstacle_distance: 0.45
     depth_center_fraction: 0.33
     depth_side_fraction: 0.30
     depth_height_fraction: 0.40
+    pointcloud_frame: optical
+    pointcloud_percentile: 10.0
+    pointcloud_center_half_width_m: 0.35
+    pointcloud_side_min_abs_m: 0.15
+    pointcloud_side_max_abs_m: 0.75
+    pointcloud_vertical_abs_m: 0.75
+    pointcloud_min_forward_m: 0.08
+    pointcloud_max_forward_m: 4.00
+    pointcloud_sample_step: 3
     dynamic_obstacle_distance: 0.70
     dynamic_closing_speed: 0.80
     dynamic_confirm_sec: 0.20

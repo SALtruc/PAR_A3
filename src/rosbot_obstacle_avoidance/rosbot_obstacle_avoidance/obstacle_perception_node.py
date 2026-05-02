@@ -1,8 +1,8 @@
 """
 Project C fused obstacle perception.
 
-This node converts the current S2 LIDAR scan, OAK-D depth image, and VL53L0X
-ToF range into one JSON obstacle representation. Keeping perception separate
+This node converts the current S2 LIDAR scan, OAK-D depth stream/point cloud,
+and VL53L0X ToF range into one JSON obstacle representation. Keeping perception separate
 from control makes the reactive policy easy to inspect and supports the
 LIDAR-only vs. LIDAR+depth ablation required for evaluation.
 """
@@ -17,8 +17,13 @@ import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, LaserScan, Range
+from sensor_msgs.msg import Image, LaserScan, PointCloud2, Range
 from std_msgs.msg import String
+
+try:
+    from sensor_msgs_py import point_cloud2
+except Exception:  # pragma: no cover - only happens outside ROS installations.
+    point_cloud2 = None
 
 
 def _as_bool(value) -> bool:
@@ -38,6 +43,16 @@ def _min_finite(*values: float) -> float:
     return min(finite) if finite else math.inf
 
 
+def _split_topics(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        items = str(value).split(',')
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
 @dataclass
 class GapTarget:
     angle: float
@@ -52,10 +67,13 @@ class ObstaclePerceptionNode(Node):
 
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('depth_topic', '/camera/depth/image_rect_raw')
+        self.declare_parameter('pointcloud_topic', '/oak/points')
         self.declare_parameter('tof_topic', '/range')
+        self.declare_parameter('tof_topics', '/range/fl,/range/fr,/range/rl,/range/rr')
         self.declare_parameter('obstacle_topic', '/obstacle_representation')
         self.declare_parameter('use_lidar', True)
         self.declare_parameter('use_depth', True)
+        self.declare_parameter('use_pointcloud', True)
         self.declare_parameter('use_tof', True)
         self.declare_parameter('publish_hz', 20.0)
 
@@ -75,6 +93,15 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_center_fraction', 0.33)
         self.declare_parameter('depth_side_fraction', 0.30)
         self.declare_parameter('depth_height_fraction', 0.40)
+        self.declare_parameter('pointcloud_frame', 'optical')
+        self.declare_parameter('pointcloud_percentile', 10.0)
+        self.declare_parameter('pointcloud_center_half_width_m', 0.35)
+        self.declare_parameter('pointcloud_side_min_abs_m', 0.15)
+        self.declare_parameter('pointcloud_side_max_abs_m', 0.75)
+        self.declare_parameter('pointcloud_vertical_abs_m', 0.75)
+        self.declare_parameter('pointcloud_min_forward_m', 0.08)
+        self.declare_parameter('pointcloud_max_forward_m', 4.00)
+        self.declare_parameter('pointcloud_sample_step', 3)
         self.declare_parameter('dynamic_obstacle_distance', 1.0)
         self.declare_parameter('dynamic_closing_speed', 0.80)
         self.declare_parameter('dynamic_confirm_sec', 0.20)
@@ -84,11 +111,18 @@ class ObstaclePerceptionNode(Node):
 
         scan_topic = self.get_parameter('scan_topic').value
         depth_topic = self.get_parameter('depth_topic').value
+        pointcloud_topic = self.get_parameter('pointcloud_topic').value
         tof_topic = self.get_parameter('tof_topic').value
+        tof_topics = _split_topics(self.get_parameter('tof_topics').value)
+        if not tof_topics:
+            tof_topics = _split_topics(tof_topic)
         obstacle_topic = self.get_parameter('obstacle_topic').value
 
         self._use_lidar = _as_bool(self.get_parameter('use_lidar').value)
         self._use_depth = _as_bool(self.get_parameter('use_depth').value)
+        self._use_pointcloud = _as_bool(
+            self.get_parameter('use_pointcloud').value
+        )
         self._use_tof = _as_bool(self.get_parameter('use_tof').value)
         publish_hz = float(self.get_parameter('publish_hz').value)
 
@@ -134,6 +168,35 @@ class ObstaclePerceptionNode(Node):
         self._depth_height_fraction = float(
             self.get_parameter('depth_height_fraction').value
         )
+        self._pointcloud_frame = str(
+            self.get_parameter('pointcloud_frame').value
+        ).strip().lower()
+        self._pointcloud_percentile = max(
+            0.0,
+            min(100.0, float(self.get_parameter('pointcloud_percentile').value)),
+        )
+        self._pointcloud_center_half_width_m = float(
+            self.get_parameter('pointcloud_center_half_width_m').value
+        )
+        self._pointcloud_side_min_abs_m = float(
+            self.get_parameter('pointcloud_side_min_abs_m').value
+        )
+        self._pointcloud_side_max_abs_m = float(
+            self.get_parameter('pointcloud_side_max_abs_m').value
+        )
+        self._pointcloud_vertical_abs_m = float(
+            self.get_parameter('pointcloud_vertical_abs_m').value
+        )
+        self._pointcloud_min_forward_m = float(
+            self.get_parameter('pointcloud_min_forward_m').value
+        )
+        self._pointcloud_max_forward_m = float(
+            self.get_parameter('pointcloud_max_forward_m').value
+        )
+        self._pointcloud_sample_step = max(
+            1,
+            int(self.get_parameter('pointcloud_sample_step').value),
+        )
         self._dynamic_obstacle_distance = float(
             self.get_parameter('dynamic_obstacle_distance').value
         )
@@ -159,8 +222,14 @@ class ObstaclePerceptionNode(Node):
         self._depth_left = math.inf
         self._depth_right = math.inf
         self._last_depth_time: float | None = None
+        self._pointcloud_front = math.inf
+        self._pointcloud_left = math.inf
+        self._pointcloud_right = math.inf
+        self._last_pointcloud_time: float | None = None
         self._tof_range = math.inf
         self._last_tof_time: float | None = None
+        self._tof_ranges: dict[str, float] = {}
+        self._last_tof_times: dict[str, float] = {}
         self._prev_front_sample: tuple[float, float] | None = None
         self._filtered_front_distance: float | None = None
         self._dynamic_first_seen_time: float | None = None
@@ -169,28 +238,52 @@ class ObstaclePerceptionNode(Node):
         self._clear_seen_since: float | None = None
         self._blocked_sources: list[str] = []
         self._bridge = CvBridge()
+        self._subscriptions = []
 
         if self._use_lidar:
-            self.create_subscription(
-                LaserScan,
-                scan_topic,
-                self._on_scan,
-                qos_profile_sensor_data,
+            self._subscriptions.append(
+                self.create_subscription(
+                    LaserScan,
+                    scan_topic,
+                    self._on_scan,
+                    qos_profile_sensor_data,
+                )
             )
         if self._use_depth:
-            self.create_subscription(
-                Image,
-                depth_topic,
-                self._on_depth,
-                qos_profile_sensor_data,
+            self._subscriptions.append(
+                self.create_subscription(
+                    Image,
+                    depth_topic,
+                    self._on_depth,
+                    qos_profile_sensor_data,
+                )
             )
+        if self._use_pointcloud:
+            if point_cloud2 is None:
+                self.get_logger().warn(
+                    'sensor_msgs_py.point_cloud2 is unavailable; '
+                    'OAK point cloud input disabled.'
+                )
+                self._use_pointcloud = False
+            else:
+                self._subscriptions.append(
+                    self.create_subscription(
+                        PointCloud2,
+                        pointcloud_topic,
+                        self._on_pointcloud,
+                        qos_profile_sensor_data,
+                    )
+                )
         if self._use_tof:
-            self.create_subscription(
-                Range,
-                tof_topic,
-                self._on_tof,
-                qos_profile_sensor_data,
-            )
+            for topic in tof_topics:
+                self._subscriptions.append(
+                    self.create_subscription(
+                        Range,
+                        topic,
+                        lambda msg, topic=topic: self._on_tof(msg, topic),
+                        qos_profile_sensor_data,
+                    )
+                )
 
         self._pub = self.create_publisher(String, obstacle_topic, 10)
         self.create_timer(1.0 / max(publish_hz, 1.0), self._publish_representation)
@@ -198,8 +291,9 @@ class ObstaclePerceptionNode(Node):
         self.get_logger().info(
             'Obstacle perception ready. '
             f'lidar={scan_topic if self._use_lidar else "disabled"}, '
-            f'depth={depth_topic if self._use_depth else "disabled"}, '
-            f'tof={tof_topic if self._use_tof else "disabled"}, '
+            f'depth_image={depth_topic if self._use_depth else "disabled"}, '
+            f'pointcloud={pointcloud_topic if self._use_pointcloud else "disabled"}, '
+            f'tof={",".join(tof_topics) if self._use_tof else "disabled"}, '
             f'out={obstacle_topic}'
         )
 
@@ -207,12 +301,16 @@ class ObstaclePerceptionNode(Node):
         self._latest_scan = msg
         self._last_scan_time = time.monotonic()
 
-    def _on_tof(self, msg: Range):
-        self._last_tof_time = time.monotonic()
+    def _on_tof(self, msg: Range, topic: str):
+        now = time.monotonic()
+        self._last_tof_time = now
+        self._last_tof_times[topic] = now
         if math.isfinite(msg.range) and msg.min_range < msg.range < msg.max_range:
-            self._tof_range = msg.range
+            distance = msg.range
         else:
-            self._tof_range = math.inf
+            distance = math.inf
+        self._tof_ranges[topic] = distance
+        self._tof_range = self._tof_min_recent()
 
     def _on_depth(self, msg: Image):
         try:
@@ -239,6 +337,76 @@ class ObstaclePerceptionNode(Node):
             x_center=0.75,
             width_fraction=self._depth_side_fraction,
         )
+
+    def _on_pointcloud(self, msg: PointCloud2):
+        front_vals: list[float] = []
+        left_vals: list[float] = []
+        right_vals: list[float] = []
+
+        try:
+            points = point_cloud2.read_points(
+                msg,
+                field_names=('x', 'y', 'z'),
+                skip_nans=True,
+            )
+        except Exception:
+            return
+
+        for index, point in enumerate(points):
+            if index % self._pointcloud_sample_step != 0:
+                continue
+            xyz = self._point_xyz(point)
+            if xyz is None:
+                continue
+            x, y, z = xyz
+            forward, lateral, vertical = self._pointcloud_axes(x, y, z)
+            if not (
+                    math.isfinite(forward)
+                    and math.isfinite(lateral)
+                    and math.isfinite(vertical)):
+                continue
+            if (
+                    forward < self._pointcloud_min_forward_m
+                    or forward > self._pointcloud_max_forward_m
+                    or abs(vertical) > self._pointcloud_vertical_abs_m):
+                continue
+            if abs(lateral) <= self._pointcloud_center_half_width_m:
+                front_vals.append(forward)
+            elif (
+                    -self._pointcloud_side_max_abs_m
+                    <= lateral
+                    <= -self._pointcloud_side_min_abs_m):
+                left_vals.append(forward)
+            elif (
+                    self._pointcloud_side_min_abs_m
+                    <= lateral
+                    <= self._pointcloud_side_max_abs_m):
+                right_vals.append(forward)
+
+        self._last_pointcloud_time = time.monotonic()
+        self._pointcloud_front = self._pointcloud_stat(front_vals)
+        self._pointcloud_left = self._pointcloud_stat(left_vals)
+        self._pointcloud_right = self._pointcloud_stat(right_vals)
+
+    @staticmethod
+    def _point_xyz(point) -> tuple[float, float, float] | None:
+        try:
+            return float(point[0]), float(point[1]), float(point[2])
+        except (IndexError, KeyError, TypeError, ValueError):
+            try:
+                return float(point['x']), float(point['y']), float(point['z'])
+            except (IndexError, KeyError, TypeError, ValueError):
+                return None
+
+    def _pointcloud_axes(self, x: float, y: float, z: float) -> tuple[float, float, float]:
+        if self._pointcloud_frame in ('base', 'base_link', 'ros'):
+            return x, y, z
+        return z, x, y
+
+    def _pointcloud_stat(self, values: list[float]) -> float:
+        if not values:
+            return math.inf
+        return float(np.percentile(values, self._pointcloud_percentile))
 
     def _depth_roi_distance(
             self,
@@ -277,8 +445,15 @@ class ObstaclePerceptionNode(Node):
         now = time.monotonic()
         wall_stamp = time.time()
         scan_recent = self._use_lidar and self._sensor_recent(self._last_scan_time)
-        depth_recent = self._use_depth and self._sensor_recent(self._last_depth_time)
-        tof_recent = self._use_tof and self._sensor_recent(self._last_tof_time)
+        depth_image_recent = self._use_depth and self._sensor_recent(
+            self._last_depth_time
+        )
+        pointcloud_recent = self._use_pointcloud and self._sensor_recent(
+            self._last_pointcloud_time
+        )
+        depth_recent = depth_image_recent or pointcloud_recent
+        tof_range = self._tof_min_recent()
+        tof_recent = self._use_tof and math.isfinite(tof_range)
 
         lidar_front = math.inf
         lidar_front_control = math.inf
@@ -304,10 +479,15 @@ class ObstaclePerceptionNode(Node):
                 best_gap,
             ) = self._process_scan()
 
-        depth_front = self._depth_front if depth_recent else math.inf
-        depth_left = self._depth_left if depth_recent else math.inf
-        depth_right = self._depth_right if depth_recent else math.inf
-        tof_range = self._tof_range if tof_recent else math.inf
+        depth_image_front = self._depth_front if depth_image_recent else math.inf
+        depth_image_left = self._depth_left if depth_image_recent else math.inf
+        depth_image_right = self._depth_right if depth_image_recent else math.inf
+        pointcloud_front = self._pointcloud_front if pointcloud_recent else math.inf
+        pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
+        pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
+        depth_front = _min_finite(depth_image_front, pointcloud_front)
+        depth_left = _min_finite(depth_image_left, pointcloud_left)
+        depth_right = _min_finite(depth_image_right, pointcloud_right)
 
         front_distance = _min_finite(lidar_front_control, depth_front)
         left_distance = _min_finite(lidar_left, depth_left)
@@ -381,7 +561,12 @@ class ObstaclePerceptionNode(Node):
             'stamp': wall_stamp,
             'ages': {
                 'scan': self._age(self._last_scan_time),
-                'depth': self._age(self._last_depth_time),
+                'depth': self._min_age(
+                    self._last_depth_time,
+                    self._last_pointcloud_time,
+                ),
+                'depth_image': self._age(self._last_depth_time),
+                'pointcloud': self._age(self._last_pointcloud_time),
                 'tof': self._age(self._last_tof_time),
             },
             'lidar': {
@@ -400,13 +585,23 @@ class ObstaclePerceptionNode(Node):
             },
             'depth': {
                 'available': bool(depth_recent),
+                'image_available': bool(depth_image_recent),
+                'pointcloud_available': bool(pointcloud_recent),
                 'front_min': _json_float(depth_front),
                 'left_min': _json_float(depth_left),
                 'right_min': _json_float(depth_right),
+                'image_front_min': _json_float(depth_image_front),
+                'pointcloud_front_min': _json_float(pointcloud_front),
+                'pointcloud_left_min': _json_float(pointcloud_left),
+                'pointcloud_right_min': _json_float(pointcloud_right),
             },
             'tof': {
                 'available': bool(tof_recent),
                 'range': _json_float(tof_range),
+                'topics': {
+                    topic: _json_float(distance)
+                    for topic, distance in self._tof_ranges.items()
+                },
             },
             'fused': {
                 'front_distance': _json_float(front_distance),
@@ -473,6 +668,21 @@ class ObstaclePerceptionNode(Node):
         if stamp is None:
             return None
         return max(0.0, time.monotonic() - stamp)
+
+    def _min_age(self, *stamps: float | None) -> float | None:
+        ages = [self._age(stamp) for stamp in stamps if stamp is not None]
+        return min(ages) if ages else None
+
+    def _tof_min_recent(self) -> float:
+        if not self._use_tof:
+            return math.inf
+        recent_ranges = [
+            distance
+            for topic, distance in self._tof_ranges.items()
+            if self._sensor_recent(self._last_tof_times.get(topic))
+            and math.isfinite(distance)
+        ]
+        return min(recent_ranges) if recent_ranges else math.inf
 
     @staticmethod
     def _gap_json(gap: GapTarget | None) -> dict | None:
@@ -645,6 +855,9 @@ def main(args=None):
     node = ObstaclePerceptionNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

@@ -12,11 +12,17 @@ def generate_launch_description():
     config = PathJoinSubstitution([pkg, 'config', 'params.yaml'])
 
     args = [
-        DeclareLaunchArgument('scan_topic', default_value='/scan'),
+        DeclareLaunchArgument('scan_topic', default_value='/scan_filtered'),
         DeclareLaunchArgument('depth_topic', default_value='/camera/depth/image_rect_raw'),
+        DeclareLaunchArgument('pointcloud_topic', default_value='/oak/points'),
         DeclareLaunchArgument('tof_topic', default_value='/range'),
+        DeclareLaunchArgument(
+            'tof_topics',
+            default_value='/range/fl,/range/fr,/range/rl,/range/rr',
+        ),
         DeclareLaunchArgument('use_lidar', default_value='true'),
-        DeclareLaunchArgument('use_depth', default_value='true'),
+        DeclareLaunchArgument('use_depth', default_value='false'),
+        DeclareLaunchArgument('use_pointcloud', default_value='true'),
         DeclareLaunchArgument('use_tof', default_value='true'),
         DeclareLaunchArgument('obstacle_topic', default_value='/obstacle_representation'),
         DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel'),
@@ -29,7 +35,7 @@ def generate_launch_description():
         DeclareLaunchArgument('clear_distance', default_value='0.40'),
         DeclareLaunchArgument('slow_distance', default_value='0.55'),
         DeclareLaunchArgument('front_body_offset_m', default_value='0.10'),
-        DeclareLaunchArgument('depth_obstacle_distance', default_value='0.80'),
+        DeclareLaunchArgument('depth_obstacle_distance', default_value='0.45'),
         DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
         DeclareLaunchArgument('obstacle_hold_sec', default_value='0.35'),
         DeclareLaunchArgument('clear_confirm_sec', default_value='0.20'),
@@ -52,9 +58,12 @@ def generate_launch_description():
             {
                 'scan_topic': LaunchConfiguration('scan_topic'),
                 'depth_topic': LaunchConfiguration('depth_topic'),
+                'pointcloud_topic': LaunchConfiguration('pointcloud_topic'),
                 'tof_topic': LaunchConfiguration('tof_topic'),
+                'tof_topics': LaunchConfiguration('tof_topics'),
                 'use_lidar': LaunchConfiguration('use_lidar'),
                 'use_depth': LaunchConfiguration('use_depth'),
+                'use_pointcloud': LaunchConfiguration('use_pointcloud'),
                 'use_tof': LaunchConfiguration('use_tof'),
                 'obstacle_topic': LaunchConfiguration('obstacle_topic'),
                 'emergency_distance': LaunchConfiguration('emergency_distance'),
