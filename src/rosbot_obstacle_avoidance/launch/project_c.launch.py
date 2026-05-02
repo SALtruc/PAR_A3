@@ -25,15 +25,15 @@ def generate_launch_description():
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
         DeclareLaunchArgument('max_speed', default_value='0.10'),
         DeclareLaunchArgument('emergency_distance', default_value='0.25'),
-        DeclareLaunchArgument('obstacle_distance', default_value='0.55'),
-        DeclareLaunchArgument('clear_distance', default_value='0.85'),
+        DeclareLaunchArgument('obstacle_distance', default_value='0.65'),
+        DeclareLaunchArgument('clear_distance', default_value='0.90'),
         DeclareLaunchArgument('depth_obstacle_distance', default_value='0.80'),
         DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
         DeclareLaunchArgument('obstacle_hold_sec', default_value='0.35'),
         DeclareLaunchArgument('clear_confirm_sec', default_value='0.20'),
-        DeclareLaunchArgument('avoid_turn_only_distance', default_value='0.65'),
-        DeclareLaunchArgument('avoid_forward_distance', default_value='0.95'),
-        DeclareLaunchArgument('dynamic_hold_sec', default_value='0.80'),
+        DeclareLaunchArgument('dynamic_check_frames', default_value='4'),
+        DeclareLaunchArgument('dynamic_clear_frames', default_value='2'),
+        DeclareLaunchArgument('side_protect_distance', default_value='0.45'),
         DeclareLaunchArgument('front_percentile', default_value='15.0'),
         DeclareLaunchArgument('front_close_min_rays', default_value='3'),
         DeclareLaunchArgument('front_close_min_ratio', default_value='0.01'),
@@ -89,13 +89,11 @@ def generate_launch_description():
                 'max_speed': LaunchConfiguration('max_speed'),
                 'obstacle_distance': LaunchConfiguration('obstacle_distance'),
                 'clear_distance': LaunchConfiguration('clear_distance'),
-                'avoid_turn_only_distance': LaunchConfiguration(
-                    'avoid_turn_only_distance'
+                'dynamic_check_frames': LaunchConfiguration('dynamic_check_frames'),
+                'dynamic_clear_frames': LaunchConfiguration('dynamic_clear_frames'),
+                'side_protect_distance': LaunchConfiguration(
+                    'side_protect_distance'
                 ),
-                'avoid_forward_distance': LaunchConfiguration(
-                    'avoid_forward_distance'
-                ),
-                'dynamic_hold_sec': LaunchConfiguration('dynamic_hold_sec'),
                 'debug_decisions': LaunchConfiguration('debug_decisions'),
                 'debug_period_sec': LaunchConfiguration('debug_period_sec'),
             },
