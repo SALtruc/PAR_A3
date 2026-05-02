@@ -109,8 +109,9 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('gap_kp', 0.65)
         self.declare_parameter('corridor_kp', 0.14)
 
-        self.declare_parameter('obstacle_distance', 0.15)
-        self.declare_parameter('clear_distance', 0.25)
+        self.declare_parameter('obstacle_distance', 0.30)
+        self.declare_parameter('clear_distance', 0.40)
+        self.declare_parameter('slow_distance', 0.55)
         self.declare_parameter('front_body_offset_m', 0.10)
         self.declare_parameter('dynamic_stop_distance', 0.80)
         self.declare_parameter('dynamic_check_frames', 4)
@@ -118,7 +119,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('obstacle_stale_sec', 1.0)
         self.declare_parameter('turn_out_sec', 0.90)
         self.declare_parameter('side_balance_distance', 0.80)
-        self.declare_parameter('side_protect_distance', 0.25)
+        self.declare_parameter('side_protect_distance', 0.30)
         self.declare_parameter('turn_direction_hold_sec', 0.80)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 1.0)
@@ -142,6 +143,7 @@ class ObstacleAvoidanceNode(Node):
         self._corridor_kp = float(self.get_parameter('corridor_kp').value)
         self._obstacle_distance = float(self.get_parameter('obstacle_distance').value)
         self._clear_distance = float(self.get_parameter('clear_distance').value)
+        self._slow_distance = float(self.get_parameter('slow_distance').value)
         self._front_body_offset_m = max(
             0.0,
             float(self.get_parameter('front_body_offset_m').value),
@@ -439,7 +441,7 @@ class ObstacleAvoidanceNode(Node):
         twist.linear.x = self._max_speed
         twist.angular.z = 0.0
 
-        if snapshot.front < self._clear_distance:
+        if snapshot.front < self._slow_distance:
             twist.linear.x = self._min_speed
 
         if (
