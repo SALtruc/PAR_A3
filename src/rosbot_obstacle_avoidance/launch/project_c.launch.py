@@ -29,6 +29,8 @@ def generate_launch_description():
         DeclareLaunchArgument('clear_distance', default_value='0.80'),
         DeclareLaunchArgument('depth_obstacle_distance', default_value='0.80'),
         DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
+        DeclareLaunchArgument('obstacle_hold_sec', default_value='0.35'),
+        DeclareLaunchArgument('clear_confirm_sec', default_value='0.20'),
         DeclareLaunchArgument('avoid_turn_only_distance', default_value='0.45'),
         DeclareLaunchArgument('avoid_forward_distance', default_value='0.80'),
         DeclareLaunchArgument('dynamic_hold_sec', default_value='0.80'),
@@ -62,6 +64,8 @@ def generate_launch_description():
                 'dynamic_closing_speed': LaunchConfiguration(
                     'dynamic_closing_speed'
                 ),
+                'obstacle_hold_sec': LaunchConfiguration('obstacle_hold_sec'),
+                'clear_confirm_sec': LaunchConfiguration('clear_confirm_sec'),
             },
         ],
         output='screen',

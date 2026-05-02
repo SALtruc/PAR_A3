@@ -20,7 +20,7 @@ map and no goal: every command comes from the current fused sensor snapshot.
 | Dynamic obstacle | Confirm fast closing front range, enter `DYNAMIC_AVOID`, and hold a stop before re-planning |
 | Dead end | Reverse, turn toward the clearer side, and retry |
 | Narrow passage | Reduce speed and use left/right corridor centering |
-| Emergency range | Hard stop when fused front range or ToF is below `emergency_distance` |
+| Emergency range | Hard stop when ToF/depth or robust LIDAR front control is below `emergency_distance` |
 
 ## Run
 
@@ -73,17 +73,19 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `max_speed` | `0.12` | Roaming speed in clear space |
-| `obstacle_distance` | `0.70` | Distance that starts avoidance |
-| `clear_distance` | `0.90` | Distance treated as comfortably clear |
+| `max_speed` | `0.10` | Roaming speed in clear space |
+| `obstacle_distance` | `0.55` | Distance that starts avoidance |
+| `clear_distance` | `0.80` | Distance treated as comfortably clear |
 | `emergency_distance` | `0.25` | Hard stop threshold |
 | `depth_obstacle_distance` | `0.80` | Depth-camera front obstacle threshold |
 | `dynamic_closing_speed` | `0.80` | m/s closing rate that marks dynamic obstacle |
 | `dynamic_hold_sec` | `0.80` | Stop hold after dynamic obstacle confirmation |
-| `avoid_turn_only_distance` | `0.65` | Rotate in place instead of creeping forward below this range |
-| `avoid_forward_distance` | `0.90` | Front range required before slow forward motion in `AVOID` |
+| `obstacle_hold_sec` | `0.35` | Keeps obstacle detection latched across brief noisy clear frames |
+| `clear_confirm_sec` | `0.20` | Requires a stable clear front sector before leaving obstacle mode |
+| `avoid_turn_only_distance` | `0.45` | Rotate in place instead of creeping forward below this range |
+| `avoid_forward_distance` | `0.80` | Front range required before slow forward motion in `AVOID` |
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
-| `corridor_kp` | `0.45` | Narrow-passage centering strength |
-| `backup_sec` | `0.9` | Reverse duration for dead-end recovery |
-| `turn_out_sec` | `1.8` | Turn duration after backing out |
+| `corridor_kp` | `0.18` | Narrow-passage centering strength |
+| `backup_sec` | `0.45` | Reverse duration for dead-end recovery |
+| `turn_out_sec` | `1.2` | Turn duration after backing out |
 | `wander_interval_sec` | `4.0` | How often open-space random walk changes steering bias |

@@ -12,8 +12,8 @@ obstacle_perception:
     publish_hz: 20.0
 
     emergency_distance: 0.25
-    obstacle_distance: 0.70
-    clear_distance: 0.90
+    obstacle_distance: 0.55
+    clear_distance: 0.80
     front_angle_deg: 30.0
     front_percentile: 15.0
     side_angle_deg: 70.0
@@ -24,10 +24,13 @@ obstacle_perception:
     depth_obstacle_distance: 0.80
     depth_center_fraction: 0.33
     depth_side_fraction: 0.30
+    depth_height_fraction: 0.40
     dynamic_obstacle_distance: 1.0
     dynamic_closing_speed: 0.80
     dynamic_confirm_sec: 0.20
     front_filter_alpha: 0.35
+    obstacle_hold_sec: 0.35
+    clear_confirm_sec: 0.20
 
 obstacle_avoidance:
   ros__parameters:
@@ -56,9 +59,10 @@ obstacle_avoidance:
     obstacle_stale_sec: 1.0
     backup_sec: 0.45
     turn_out_sec: 1.2
-    wander_enabled: false
+    narrow_passage_distance: 0.65
+    wander_enabled: true
     wander_interval_sec: 4.0
-    wander_angular_speed: 0.08
+    wander_angular_speed: 0.15
     side_balance_distance: 0.95
     debug_decisions: true
     debug_period_sec: 1.0

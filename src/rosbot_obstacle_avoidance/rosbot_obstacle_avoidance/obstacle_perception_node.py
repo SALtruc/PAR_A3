@@ -71,10 +71,13 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_obstacle_distance', 0.65)
         self.declare_parameter('depth_center_fraction', 0.33)
         self.declare_parameter('depth_side_fraction', 0.30)
+        self.declare_parameter('depth_height_fraction', 0.40)
         self.declare_parameter('dynamic_obstacle_distance', 1.0)
         self.declare_parameter('dynamic_closing_speed', 0.80)
         self.declare_parameter('dynamic_confirm_sec', 0.20)
         self.declare_parameter('front_filter_alpha', 0.35)
+        self.declare_parameter('obstacle_hold_sec', 0.35)
+        self.declare_parameter('clear_confirm_sec', 0.20)
 
         scan_topic = self.get_parameter('scan_topic').value
         depth_topic = self.get_parameter('depth_topic').value
@@ -117,6 +120,9 @@ class ObstaclePerceptionNode(Node):
         self._depth_side_fraction = float(
             self.get_parameter('depth_side_fraction').value
         )
+        self._depth_height_fraction = float(
+            self.get_parameter('depth_height_fraction').value
+        )
         self._dynamic_obstacle_distance = float(
             self.get_parameter('dynamic_obstacle_distance').value
         )
@@ -128,6 +134,12 @@ class ObstaclePerceptionNode(Node):
         )
         self._front_filter_alpha = float(
             self.get_parameter('front_filter_alpha').value
+        )
+        self._obstacle_hold_sec = float(
+            self.get_parameter('obstacle_hold_sec').value
+        )
+        self._clear_confirm_sec = float(
+            self.get_parameter('clear_confirm_sec').value
         )
 
         self._latest_scan: LaserScan | None = None
@@ -141,6 +153,10 @@ class ObstaclePerceptionNode(Node):
         self._prev_front_sample: tuple[float, float] | None = None
         self._filtered_front_distance: float | None = None
         self._dynamic_first_seen_time: float | None = None
+        self._blocked_latched = False
+        self._blocked_until = 0.0
+        self._clear_seen_since: float | None = None
+        self._blocked_sources: list[str] = []
         self._bridge = CvBridge()
 
         if self._use_lidar:
@@ -206,7 +222,7 @@ class ObstaclePerceptionNode(Node):
             width_fraction: float) -> float:
         h, w = depth_img.shape[:2]
         roi_w = max(1, int(w * width_fraction))
-        roi_h = max(1, int(h * self._depth_center_fraction))
+        roi_h = max(1, int(h * self._depth_height_fraction))
         cx = int(w * x_center)
         cy = h // 2
         x0 = max(0, cx - roi_w // 2)
@@ -246,20 +262,15 @@ class ObstaclePerceptionNode(Node):
         lidar_rear = math.inf
         best_gap: GapTarget | None = None
         if scan_recent:
-            lidar_front = self._sector_min(-self._front_angle, self._front_angle)
-            lidar_front_control = self._sector_percentile(
-                -self._front_angle,
-                self._front_angle,
-                self._front_percentile,
-            )
-            lidar_front_mean = self._sector_mean(-self._front_angle, self._front_angle)
-            lidar_left = self._sector_mean(math.radians(35.0), self._side_angle)
-            lidar_right = self._sector_mean(-self._side_angle, math.radians(-35.0))
-            lidar_rear = self._sector_mean(
-                math.pi - self._rear_angle,
-                math.pi,
-            )
-            best_gap = self._best_gap_target()
+            (
+                lidar_front,
+                lidar_front_control,
+                lidar_front_mean,
+                lidar_left,
+                lidar_right,
+                lidar_rear,
+                best_gap,
+            ) = self._process_scan()
 
         depth_front = self._depth_front if depth_recent else math.inf
         depth_left = self._depth_left if depth_recent else math.inf
@@ -273,12 +284,23 @@ class ObstaclePerceptionNode(Node):
 
         blocked_lidar = lidar_front_control < self._obstacle_distance
         blocked_depth = depth_front < self._depth_obstacle_distance
-        blocked = blocked_lidar or blocked_depth
-        emergency = (
-            lidar_front < self._emergency_distance
-            or depth_front < self._emergency_distance
-            or tof_range < self._emergency_distance
+        lidar_emergency = lidar_front_control < self._emergency_distance
+        depth_emergency = depth_front < self._emergency_distance
+        tof_emergency = tof_range < self._emergency_distance
+        raw_blocked = blocked_lidar or blocked_depth
+        raw_blocked_sources = []
+        if blocked_lidar:
+            raw_blocked_sources.append('lidar')
+        if blocked_depth:
+            raw_blocked_sources.append('depth')
+
+        blocked, blocked_held = self._apply_blocked_hysteresis(
+            raw_blocked,
+            front_distance >= self._clear_distance,
+            now,
+            raw_blocked_sources,
         )
+        emergency = lidar_emergency or depth_emergency or tof_emergency
         dead_end = blocked and (
             best_gap is None
             or (
@@ -289,11 +311,13 @@ class ObstaclePerceptionNode(Node):
         dynamic_obstacle, closing_speed = self._dynamic_obstacle(front_distance, now)
 
         sources = []
-        if blocked_lidar:
+        if blocked_lidar or lidar_emergency or (
+                blocked and not raw_blocked_sources and 'lidar' in self._blocked_sources):
             sources.append('lidar')
-        if blocked_depth:
+        if blocked_depth or depth_emergency or (
+                blocked and not raw_blocked_sources and 'depth' in self._blocked_sources):
             sources.append('depth')
-        if tof_range < self._emergency_distance:
+        if tof_emergency:
             sources.append('tof')
 
         rep = {
@@ -329,6 +353,8 @@ class ObstaclePerceptionNode(Node):
                 'right_distance': _json_float(right_distance),
                 'rear_distance': _json_float(rear_distance),
                 'blocked': bool(blocked),
+                'blocked_raw': bool(raw_blocked),
+                'blocked_held': bool(blocked_held),
                 'clear': bool(front_distance >= self._clear_distance),
                 'emergency': bool(emergency),
                 'dead_end': bool(dead_end),
@@ -346,6 +372,41 @@ class ObstaclePerceptionNode(Node):
         msg = String()
         msg.data = json.dumps(rep, separators=(',', ':'))
         self._pub.publish(msg)
+
+    def _apply_blocked_hysteresis(
+            self,
+            raw_blocked: bool,
+            clear_now: bool,
+            now: float,
+            raw_sources: list[str]) -> tuple[bool, bool]:
+        if raw_blocked:
+            self._blocked_latched = True
+            self._blocked_until = now + max(0.0, self._obstacle_hold_sec)
+            self._clear_seen_since = None
+            self._blocked_sources = list(raw_sources)
+            return True, False
+
+        if not self._blocked_latched:
+            self._clear_seen_since = None
+            self._blocked_sources = []
+            return False, False
+
+        if not clear_now:
+            self._clear_seen_since = None
+            return True, True
+
+        if self._clear_seen_since is None:
+            self._clear_seen_since = now
+
+        clear_confirmed = now - self._clear_seen_since >= self._clear_confirm_sec
+        hold_expired = now >= self._blocked_until
+        if clear_confirmed and hold_expired:
+            self._blocked_latched = False
+            self._clear_seen_since = None
+            self._blocked_sources = []
+            return False, False
+
+        return True, True
 
     def _age(self, stamp: float | None) -> float | None:
         if stamp is None:
@@ -400,23 +461,63 @@ class ObstaclePerceptionNode(Node):
             self._dynamic_first_seen_time = None
         return dynamic, closing_speed
 
-    def _best_gap_target(self) -> GapTarget | None:
+    def _process_scan(self) -> tuple:
+        """Single-pass scan processing: computes all sector stats and gap target."""
         scan = self._latest_scan
         if scan is None:
-            return None
+            return math.inf, math.inf, math.inf, math.inf, math.inf, math.inf, None
 
-        points = []
+        front_vals: list[float] = []
+        left_vals: list[float] = []
+        right_vals: list[float] = []
+        rear_vals: list[float] = []
+        gap_points: list[tuple[float, float, bool]] = []
+
+        left_lo = math.radians(35.0)
+        right_hi = math.radians(-35.0)
+        rear_lo = math.pi - self._rear_angle
+
         angle = scan.angle_min
         for value in scan.ranges:
+            valid = math.isfinite(value) and scan.range_min <= value <= scan.range_max
+            if valid:
+                if -self._front_angle <= angle <= self._front_angle:
+                    front_vals.append(value)
+                if left_lo <= angle <= self._side_angle:
+                    left_vals.append(value)
+                if -self._side_angle <= angle <= right_hi:
+                    right_vals.append(value)
+                if rear_lo <= angle <= math.pi:
+                    rear_vals.append(value)
             if -self._gap_angle_limit <= angle <= self._gap_angle_limit:
-                valid = (
-                    math.isfinite(value)
-                    and scan.range_min <= value <= scan.range_max
-                    and value >= self._obstacle_distance
-                )
-                points.append((angle, value, valid))
+                gap_valid = valid and value >= self._obstacle_distance
+                gap_points.append((angle, value if valid else math.inf, gap_valid))
             angle += scan.angle_increment
 
+        lidar_front = min(front_vals) if front_vals else math.inf
+        lidar_front_control = (
+            float(np.percentile(front_vals, self._front_percentile))
+            if front_vals else math.inf
+        )
+        lidar_front_mean = (
+            float(sum(front_vals) / len(front_vals)) if front_vals else math.inf
+        )
+        lidar_left = float(sum(left_vals) / len(left_vals)) if left_vals else math.inf
+        lidar_right = float(sum(right_vals) / len(right_vals)) if right_vals else math.inf
+        lidar_rear = float(sum(rear_vals) / len(rear_vals)) if rear_vals else math.inf
+        best_gap = self._find_best_gap(gap_points)
+
+        return (
+            lidar_front,
+            lidar_front_control,
+            lidar_front_mean,
+            lidar_left,
+            lidar_right,
+            lidar_rear,
+            best_gap,
+        )
+
+    def _find_best_gap(self, points: list[tuple[float, float, bool]]) -> GapTarget | None:
         best: GapTarget | None = None
         start = 0
         while start < len(points):
@@ -438,37 +539,6 @@ class ObstaclePerceptionNode(Node):
                     best = candidate
             start = end + 1
         return best
-
-    def _sector_min(self, angle_lo: float, angle_hi: float) -> float:
-        values = self._sector_values(angle_lo, angle_hi)
-        return min(values) if values else math.inf
-
-    def _sector_mean(self, angle_lo: float, angle_hi: float) -> float:
-        values = self._sector_values(angle_lo, angle_hi)
-        return float(sum(values) / len(values)) if values else math.inf
-
-    def _sector_percentile(
-            self,
-            angle_lo: float,
-            angle_hi: float,
-            percentile: float) -> float:
-        values = self._sector_values(angle_lo, angle_hi)
-        if not values:
-            return math.inf
-        return float(np.percentile(values, percentile))
-
-    def _sector_values(self, angle_lo: float, angle_hi: float) -> list[float]:
-        scan = self._latest_scan
-        if scan is None:
-            return []
-        values = []
-        angle = scan.angle_min
-        for value in scan.ranges:
-            if angle_lo <= angle <= angle_hi:
-                if math.isfinite(value) and scan.range_min <= value <= scan.range_max:
-                    values.append(value)
-            angle += scan.angle_increment
-        return values
 
 
 def main(args=None):
