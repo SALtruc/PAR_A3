@@ -3,11 +3,11 @@ Project C reactive decision node.
 
 Policy:
 - drive forward when the current front path is usable;
-- use raw front distance for safety thresholds, not the body-offset spacing;
+- use depth-confirmed front distance for safety thresholds when OAK depth is available;
 - if a sudden object appears in the 15-30cm band, observe several frames before deciding;
 - if the object persists but there is side room, perform a small forward dodge instead of a full spin;
 - rotate only when the front path is truly blocked or a dead-end is detected;
-- if one side is critically close, back up first instead of continuing to scrape the wall;
+- if one side is close while front is clear, keep heading straight and slow down instead of steering away;
 - hard-stop on ToF emergency.
 
 No map, no route, no long-term memory.
@@ -107,8 +107,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('max_speed', 0.10)
         self.declare_parameter('min_speed', 0.05)
         self.declare_parameter('max_angular_speed', 0.35)
-        self.declare_parameter('drive_max_angular_speed', 0.12)
-        self.declare_parameter('corridor_kp', 0.14)
+        self.declare_parameter('drive_max_angular_speed', 0.06)
+        self.declare_parameter('corridor_kp', 0.0)
 
         # Distance thresholds
         self.declare_parameter('obstacle_distance', 0.15)   # react when front <= this
@@ -122,8 +122,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('max_dodge_angle_deg', 45.0)
         self.declare_parameter('rotation_step_deg', 45.0)
         self.declare_parameter('side_drive_slow_distance', 0.10)
-        self.declare_parameter('side_critical_distance', 0.05)  # <=5cm side clearance: stop scraping
-        self.declare_parameter('front_body_offset_m', 0.11)
+        self.declare_parameter('side_critical_distance', 0.03)  # <=3cm side clearance: possible scrape/stuck
+        self.declare_parameter('front_body_offset_m', 0.0)
         self.declare_parameter('face_wall_distance', 0.10)  # force backup when <= this
 
         # Dodge: try to squeeze past by going forward + turning
@@ -521,18 +521,6 @@ class ObstacleAvoidanceNode(Node):
             twist.angular.z = self._turn_direction * self._rotation_angular_speed
             return True
 
-        # Try opposite direction once from current pose before backing up.
-        if self._rotation_attempts < self._max_rotation_attempts * 2:
-            self._turn_direction = -self._turn_direction
-            self._state_end_time = now + self._rotation_90_sec
-            self.get_logger().info(
-                f'Rotate switching to {"left" if self._turn_direction > 0 else "right"}; '
-                f'front={_fmt_cm(snapshot.front_raw)} spacing={_fmt_cm(snapshot.front)}'
-            )
-            twist.linear.x = 0.0
-            twist.angular.z = self._turn_direction * self._rotation_angular_speed
-            return True
-
         self.get_logger().warn(
             'Rotate search failed to find usable front path — backing up and retrying'
         )
@@ -544,8 +532,33 @@ class ObstacleAvoidanceNode(Node):
     # ── Policy helper predicates ──────────────────────────────────────────────
 
     def _front_decision_distance(self, snapshot: Snapshot) -> float:
-        # Use raw fused front distance for safety decisions. The body-offset spacing is
-        # useful for reporting, but it made the robot overreact at startup.
+        """Distance used by the decision policy for the robot's current face/front.
+
+        Key fix: when OAK depth says the front corridor is clear but LIDAR reports
+        a very near hit, treat the LIDAR hit as a likely side-edge/reflection false
+        positive. This was the main cause of the robot refusing to drive straight
+        on an actually clear path.
+        """
+        lidar_d = snapshot.lidar_front
+        depth_d = snapshot.depth_front
+
+        # Depth-confirmed clear front overrides suspicious close LIDAR hits.
+        # If there is a real wall directly in front, OAK depth should also be close.
+        if (
+            snapshot.depth_available
+            and math.isfinite(depth_d)
+            and depth_d >= self._clear_distance
+            and (not math.isfinite(lidar_d) or lidar_d < self._observe_distance)
+        ):
+            return depth_d
+
+        # If both sensors are available, use the safer minimum only when depth is
+        # not clearly telling us the front is open.
+        if snapshot.depth_available and math.isfinite(depth_d):
+            if math.isfinite(snapshot.front_raw):
+                return min(snapshot.front_raw, depth_d)
+            return depth_d
+
         if math.isfinite(snapshot.front_raw):
             return snapshot.front_raw
         return snapshot.front
@@ -674,51 +687,29 @@ class ObstacleAvoidanceNode(Node):
     # ── DRIVE straight with corridor centering ────────────────────────────────
 
     def _drive_straight(self, twist: Twist, snapshot: Snapshot, force_slow: bool = False):
-        """Normal behaviour: go straight.
+        """Default behaviour: drive straight.
 
-        Do not follow best_gap and do not corridor-center aggressively during normal
-        DRIVE. Small side readings are often walls beside the robot, not a reason to
-        leave the straight heading. Only apply a very small correction when a side is
-        extremely close; confirmed front obstacles are handled by OBSERVE/DODGE/ROTATE.
+        This function intentionally does NOT follow best_gap and does NOT do
+        corridor centering. The robot should only curve when a front obstacle is
+        confirmed and the FSM enters DODGE/ROTATE. Side readings are logged, but
+        they should not make the robot drift away from the straight path.
         """
+        front_decision = self._front_decision_distance(snapshot)
+
         twist.linear.x = self._max_speed
         twist.angular.z = 0.0
 
-        if force_slow or snapshot.front < self._slow_distance:
+        if force_slow or (math.isfinite(front_decision) and front_decision < self._slow_distance):
             twist.linear.x = self._min_speed
 
-        # Emergency side scrape escape: keep slow and steer slightly away, but do
-        # not back up and do not rotate in place while front is open.
+        # If a side is almost touching but the front is still usable, do not turn
+        # aggressively; turning here caused the robot to leave the straight line.
+        # Just slow down and let the front-obstacle policy handle real blockage.
         side_min = min(snapshot.left, snapshot.right)
-        if math.isfinite(side_min) and side_min <= self._side_critical_distance:
+        if math.isfinite(side_min) and side_min <= self._side_drive_slow_distance:
             twist.linear.x = self._min_speed
-            if snapshot.left <= snapshot.right:
-                # left is too close -> steer right
-                direction = -1.0
-            else:
-                # right is too close -> steer left
-                direction = 1.0
-            twist.angular.z = _clamp(
-                direction * min(self._drive_max_angular_speed, 0.08),
-                -0.08,
-                0.08,
-            )
-            return
+            twist.angular.z = 0.0
 
-        # Soft side correction only if a wall/object is quite close. Keep it tiny
-        # so the robot still looks like it is driving straight.
-        if snapshot.side_escape is not None:
-            twist.linear.x = min(twist.linear.x, self._min_speed)
-            twist.angular.z = _clamp(
-                snapshot.side_escape * min(self._drive_max_angular_speed, 0.05),
-                -0.05,
-                0.05,
-            )
-            return
-
-        # Disable corridor centering during normal roaming. It caused the robot to
-        # drift/curve even when the front was fully clear. Uncomment only for a
-        # corridor-following variant.
         return
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
