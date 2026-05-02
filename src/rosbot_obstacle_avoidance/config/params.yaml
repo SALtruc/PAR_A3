@@ -14,9 +14,9 @@ obstacle_perception:
     use_tof: true
     publish_hz: 20.0
 
-    emergency_distance: 0.18
-    obstacle_distance: 0.28
-    clear_distance: 0.40
+    emergency_distance: 0.10
+    obstacle_distance: 0.15
+    clear_distance: 0.25
     front_center_angle_deg: 0.0
     front_angle_deg: 40.0
     front_percentile: 15.0
@@ -68,26 +68,31 @@ obstacle_avoidance:
     min_speed: 0.05
     max_angular_speed: 0.35
     drive_max_angular_speed: 0.12
-    gap_kp: 0.65
     corridor_kp: 0.14
 
-    obstacle_distance: 0.25
-    clear_distance: 0.35
-    slow_distance: 0.45
-    turn_reversal_sec: 2.5
+    # distance thresholds
+    obstacle_distance: 0.15      # react when front <= 15 cm
+    clear_distance: 0.20         # path clear when front >= 20 cm
+    slow_distance: 0.18          # slow down when this close
     front_body_offset_m: 0.11
-    face_wall_distance: 0.20
+    face_wall_distance: 0.10     # force backup when <= 10 cm
+
+    # dodge: creep forward + turn to squeeze past
+    dodge_clearance: 0.25        # min side room to attempt dodge
+    dodge_forward_speed: 0.02
+    dodge_duration_sec: 1.5
+
+    # rotate: exact 90-degree turn, try both directions
+    rotation_angular_speed: 0.45
+    max_rotation_attempts: 4
+
+    # backup
     backup_speed: 0.08
     backup_sec: 0.90
     backup_rear_stop_distance: 0.25
-    dynamic_stop_distance: 0.80
-    dynamic_check_frames: 4
-    dynamic_clear_frames: 2
-    obstacle_stale_sec: 1.0
-    turn_out_sec: 0.90
+
     side_balance_distance: 0.45
     side_protect_distance: 0.12
-    turn_direction_hold_sec: 2.5
     require_battery_ok: true
     min_battery_voltage: 11.1
     warn_battery_voltage: 11.4

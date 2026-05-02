@@ -1,15 +1,15 @@
 """
 Project C reactive decision node.
 
-Simple robot-vacuum style policy:
-- drive straight while the current sensor snapshot is clear;
-- use S2 LIDAR as the primary obstacle check;
-- when LIDAR is clear, use OAK-D depth as a secondary double-check;
-- stop and confirm depth/dynamic obstacles for a few frames before avoiding;
-- if the robot is already face-close to a static obstacle, back up first;
-- in a dead end, keep turning the chosen direction until sensors show a path.
+Policy:
+- drive straight at full speed until front obstacle is within stop_distance (15 cm);
+- try to squeeze past by moving forward + turning toward the clearer side (DODGE);
+- if squeeze fails or both sides are blocked, rotate exactly 90 degrees in place (ROTATE);
+- after each 90-degree rotation check if the path is now clear (> clear_distance);
+- if still blocked, flip direction and try another 90 degrees — up to max_rotation_attempts;
+- when all rotation attempts are exhausted, back up and restart rotation search.
 
-There is no map, no route, and no long-term memory.
+No map, no route, no long-term memory.
 """
 
 import json
@@ -25,10 +25,9 @@ from std_msgs.msg import String
 
 
 DRIVE = 'DRIVE'
-AVOID = 'AVOID'
-DYNAMIC_AVOID = 'DYNAMIC_AVOID'
+DODGE = 'DODGE'
+ROTATE = 'ROTATE'
 BACKUP = 'BACKUP'
-TURN_OUT = 'TURN_OUT'
 EMERGENCY = 'EMERGENCY'
 NO_OBSTACLES = 'NO_OBSTACLES'
 
@@ -59,7 +58,6 @@ def _fmt_cm(value: float) -> str:
     return f'{value * 100:.0f}cm' if math.isfinite(value) else 'inf'
 
 
-
 @dataclass
 class GapTarget:
     angle: float
@@ -83,7 +81,6 @@ class Snapshot:
     depth_front: float
     lidar_obstacle: bool
     depth_obstacle: bool
-    depth_double_check: bool
     static_obstacle: bool
     dynamic_candidate: bool
     emergency: bool
@@ -109,30 +106,39 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('min_speed', 0.05)
         self.declare_parameter('max_angular_speed', 0.35)
         self.declare_parameter('drive_max_angular_speed', 0.12)
-        self.declare_parameter('gap_kp', 0.65)
         self.declare_parameter('corridor_kp', 0.14)
 
-        self.declare_parameter('obstacle_distance', 0.35)
-        self.declare_parameter('clear_distance', 0.50)
-        self.declare_parameter('slow_distance', 0.65)
+        # Distance thresholds
+        self.declare_parameter('obstacle_distance', 0.15)   # react when front <= this
+        self.declare_parameter('clear_distance', 0.20)      # path clear when front >= this
+        self.declare_parameter('slow_distance', 0.18)       # slow down approaching this
         self.declare_parameter('front_body_offset_m', 0.11)
-        self.declare_parameter('dynamic_stop_distance', 0.80)
-        self.declare_parameter('face_wall_distance', 0.20)
+        self.declare_parameter('face_wall_distance', 0.10)  # force backup when <= this
+
+        # Dodge: try to squeeze past by going forward + turning
+        self.declare_parameter('dodge_clearance', 0.25)     # min side room to attempt dodge
+        self.declare_parameter('dodge_forward_speed', 0.02) # linear speed during dodge
+        self.declare_parameter('dodge_duration_sec', 1.5)   # max time to attempt dodge
+
+        # Rotate: spin exactly 90 degrees, check, try other direction if needed
+        self.declare_parameter('rotation_angular_speed', 0.45)  # rad/s for 90-degree rotation
+        self.declare_parameter('max_rotation_attempts', 4)      # attempts before backup
+
+        # Backup
         self.declare_parameter('backup_speed', 0.08)
         self.declare_parameter('backup_sec', 0.90)
         self.declare_parameter('backup_rear_stop_distance', 0.25)
-        self.declare_parameter('dynamic_check_frames', 4)
-        self.declare_parameter('dynamic_clear_frames', 2)
-        self.declare_parameter('obstacle_stale_sec', 1.0)
-        self.declare_parameter('turn_out_sec', 0.90)
-        self.declare_parameter('turn_reversal_sec', 2.5)
+
+        # Side protection
         self.declare_parameter('side_balance_distance', 0.45)
         self.declare_parameter('side_protect_distance', 0.12)
-        self.declare_parameter('turn_direction_hold_sec', 0.80)
+
+        # Battery safety
         self.declare_parameter('require_battery_ok', True)
         self.declare_parameter('min_battery_voltage', 11.1)
         self.declare_parameter('warn_battery_voltage', 11.4)
         self.declare_parameter('battery_stale_sec', 3.0)
+
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 1.0)
 
@@ -146,64 +152,48 @@ class ObstacleAvoidanceNode(Node):
 
         self._max_speed = float(self.get_parameter('max_speed').value)
         self._min_speed = float(self.get_parameter('min_speed').value)
-        self._max_angular_speed = float(
-            self.get_parameter('max_angular_speed').value
-        )
+        self._max_angular_speed = float(self.get_parameter('max_angular_speed').value)
         self._drive_max_angular_speed = float(
             self.get_parameter('drive_max_angular_speed').value
         )
-        self._gap_kp = float(self.get_parameter('gap_kp').value)
         self._corridor_kp = float(self.get_parameter('corridor_kp').value)
         self._obstacle_distance = float(self.get_parameter('obstacle_distance').value)
         self._clear_distance = float(self.get_parameter('clear_distance').value)
         self._slow_distance = float(self.get_parameter('slow_distance').value)
         self._front_body_offset_m = max(
-            0.0,
-            float(self.get_parameter('front_body_offset_m').value),
+            0.0, float(self.get_parameter('front_body_offset_m').value)
         )
-        self._dynamic_stop_distance = float(
-            self.get_parameter('dynamic_stop_distance').value
+        self._face_wall_distance = float(self.get_parameter('face_wall_distance').value)
+
+        self._dodge_clearance = float(self.get_parameter('dodge_clearance').value)
+        self._dodge_forward_speed = float(self.get_parameter('dodge_forward_speed').value)
+        self._dodge_duration_sec = float(self.get_parameter('dodge_duration_sec').value)
+
+        self._rotation_angular_speed = float(
+            self.get_parameter('rotation_angular_speed').value
         )
-        self._face_wall_distance = float(
-            self.get_parameter('face_wall_distance').value
-        )
+        self._max_rotation_attempts = int(self.get_parameter('max_rotation_attempts').value)
+        self._rotation_90_sec = (math.pi / 2) / max(self._rotation_angular_speed, 0.01)
+
         self._backup_speed = float(self.get_parameter('backup_speed').value)
         self._backup_sec = float(self.get_parameter('backup_sec').value)
         self._backup_rear_stop_distance = float(
             self.get_parameter('backup_rear_stop_distance').value
         )
-        self._dynamic_check_frames = max(
-            1,
-            int(self.get_parameter('dynamic_check_frames').value),
-        )
-        self._dynamic_clear_frames = max(
-            1,
-            int(self.get_parameter('dynamic_clear_frames').value),
-        )
-        self._obstacle_stale_sec = float(self.get_parameter('obstacle_stale_sec').value)
-        self._turn_out_sec = float(self.get_parameter('turn_out_sec').value)
-        self._turn_reversal_sec = float(self.get_parameter('turn_reversal_sec').value)
         self._side_balance_distance = float(
             self.get_parameter('side_balance_distance').value
         )
         self._side_protect_distance = float(
             self.get_parameter('side_protect_distance').value
         )
-        self._turn_direction_hold_sec = float(
-            self.get_parameter('turn_direction_hold_sec').value
-        )
         self._require_battery_ok = _as_bool(
             self.get_parameter('require_battery_ok').value
         )
-        self._min_battery_voltage = float(
-            self.get_parameter('min_battery_voltage').value
-        )
+        self._min_battery_voltage = float(self.get_parameter('min_battery_voltage').value)
         self._warn_battery_voltage = float(
             self.get_parameter('warn_battery_voltage').value
         )
-        self._battery_stale_sec = float(
-            self.get_parameter('battery_stale_sec').value
-        )
+        self._battery_stale_sec = float(self.get_parameter('battery_stale_sec').value)
         self._debug_decisions = _as_bool(self.get_parameter('debug_decisions').value)
         self._debug_period_sec = float(self.get_parameter('debug_period_sec').value)
 
@@ -212,10 +202,8 @@ class ObstacleAvoidanceNode(Node):
         self._state = NO_OBSTACLES
         self._state_end_time = 0.0
         self._turn_direction = 1.0
-        self._turn_direction_until = 0.0
-        self._turn_out_start_time: float | None = None
-        self._dynamic_seen_frames = 0
-        self._dynamic_clear_seen_frames = 0
+        self._dodge_direction = 1.0
+        self._rotation_attempts = 0
         self._battery_voltage: float | None = None
         self._last_battery_time: float | None = None
         self._last_battery_warn_time = 0.0
@@ -233,6 +221,9 @@ class ObstacleAvoidanceNode(Node):
             f'Obstacle decision ready. obstacles={obstacle_topic}, '
             f'cmd_vel={cmd_vel_topic} ({vel_type.__name__}), '
             f'battery={battery_topic}, '
+            f'stop_dist={self._obstacle_distance*100:.0f}cm '
+            f'clear_dist={self._clear_distance*100:.0f}cm '
+            f'rotation_90_sec={self._rotation_90_sec:.1f}s '
             f'debug_decisions={self._debug_decisions}'
         )
 
@@ -251,7 +242,7 @@ class ObstacleAvoidanceNode(Node):
     def _obstacles_recent(self) -> bool:
         return (
             self._last_obstacle_time is not None
-            and time.monotonic() - self._last_obstacle_time <= self._obstacle_stale_sec
+            and time.monotonic() - self._last_obstacle_time <= 1.0
         )
 
     def _transition(self, new_state: str, duration: float = 0.0):
@@ -275,7 +266,6 @@ class ObstacleAvoidanceNode(Node):
 
         if self._battery_stop_required(now):
             self._transition(EMERGENCY)
-            self._reset_dynamic_check()
             self._log_battery_safety(now)
             self._publish_velocity(twist)
             return
@@ -298,63 +288,179 @@ class ObstacleAvoidanceNode(Node):
 
         if snapshot.tof_emergency:
             self._transition(EMERGENCY)
-            self._reset_dynamic_check()
             self._log_decision('tof_emergency_stop', snapshot)
             self._publish_velocity(twist)
             return
 
+        # Continue active avoidance states
         if self._state == BACKUP:
-            if self._handle_backup_escape(twist, snapshot, now):
-                self._log_decision('backup_escape', snapshot)
+            if self._handle_backup(twist, snapshot, now):
+                self._log_decision('backup', snapshot)
                 self._publish_velocity(twist)
                 return
 
-        if self._state == DYNAMIC_AVOID:
-            if self._handle_dynamic_check(twist, snapshot, now):
-                self._log_decision('dynamic_check', snapshot)
+        if self._state == DODGE:
+            if self._handle_dodge(twist, snapshot, now):
+                self._log_decision('dodge', snapshot)
                 self._publish_velocity(twist)
                 return
 
-        if self._state == TURN_OUT:
-            if self._handle_deadend_turn(twist, snapshot, now):
-                self._log_decision('deadend_turn', snapshot)
+        if self._state == ROTATE:
+            if self._handle_rotate(twist, snapshot, now):
+                self._log_decision('rotate', snapshot)
                 self._publish_velocity(twist)
                 return
 
-        if snapshot.dynamic_candidate and snapshot.front < self._dynamic_stop_distance:
-            self._transition(DYNAMIC_AVOID)
-            self._dynamic_seen_frames = 1
-            self._dynamic_clear_seen_frames = 0
-            self._log_decision('dynamic_candidate_stop', snapshot)
-            self._publish_velocity(twist)
-            return
-
-        if self._needs_backup_escape(snapshot):
-            self._start_backup_escape(snapshot, now)
-            self._handle_backup_escape(twist, snapshot, now)
+        # Force backup when dangerously close (overrides new obstacle decisions)
+        if self._needs_backup(snapshot):
+            self._start_backup(snapshot, now)
+            self._handle_backup(twist, snapshot, now)
             self._log_decision('face_wall_backup', snapshot)
             self._publish_velocity(twist)
             return
 
-        if snapshot.dead_end:
-            self._start_deadend_turn(snapshot, now)
-            self._log_decision('deadend_start_turn', snapshot)
+        # Obstacle at stop distance: try dodge first, fall back to rotate
+        if snapshot.front <= self._obstacle_distance or snapshot.static_obstacle:
+            has_side_room = (
+                snapshot.left > self._dodge_clearance
+                or snapshot.right > self._dodge_clearance
+            )
+            if has_side_room and not snapshot.dead_end:
+                self._start_dodge(snapshot, now)
+                self._handle_dodge(twist, snapshot, now)
+                self._log_decision('dodge_start', snapshot)
+            else:
+                self._start_rotate(snapshot, now)
+                self._handle_rotate(twist, snapshot, now)
+                self._log_decision('rotate_start', snapshot)
             self._publish_velocity(twist)
             return
 
-        if snapshot.emergency or snapshot.static_obstacle or snapshot.side_escape is not None:
-            self._transition(AVOID)
-            self._reset_dynamic_check()
-            self._drive_avoid(twist, snapshot, now)
-            self._log_decision('avoid_static', snapshot)
-            self._publish_velocity(twist)
-            return
-
+        # Drive straight
         self._transition(DRIVE)
-        self._reset_dynamic_check()
         self._drive_straight(twist, snapshot)
         self._log_decision('drive_straight', snapshot)
         self._publish_velocity(twist)
+
+    # ── DODGE: move forward slowly while turning toward the clearer side ──────
+
+    def _start_dodge(self, snapshot: Snapshot, now: float):
+        self._dodge_direction = self._clearer_side(snapshot.left, snapshot.right)
+        if snapshot.side_escape is not None:
+            self._dodge_direction = snapshot.side_escape
+        self._transition(DODGE, self._dodge_duration_sec)
+
+    def _handle_dodge(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
+        # Success: squeezed through
+        if snapshot.front >= self._clear_distance and snapshot.side_escape is None:
+            self._transition(DRIVE)
+            return False
+
+        # Give up: hit wall or timed out
+        if snapshot.front <= self._face_wall_distance or now >= self._state_end_time:
+            self._start_rotate(snapshot, now)
+            return True
+
+        # Side escape overrides dodge direction
+        direction = snapshot.side_escape if snapshot.side_escape is not None \
+            else self._dodge_direction
+
+        twist.linear.x = self._dodge_forward_speed
+        twist.angular.z = direction * self._max_angular_speed
+        return True
+
+    # ── ROTATE: spin exactly 90 degrees, check, try other direction if needed ─
+
+    def _start_rotate(self, snapshot: Snapshot, now: float):
+        self._turn_direction = self._clearer_side(snapshot.left, snapshot.right)
+        if snapshot.side_escape is not None:
+            self._turn_direction = snapshot.side_escape
+        self._rotation_attempts = 0
+        self._transition(ROTATE, self._rotation_90_sec)
+
+    def _handle_rotate(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
+        # Side escape can override turn direction during rotation
+        if snapshot.side_escape is not None:
+            self._turn_direction = snapshot.side_escape
+
+        # Still rotating this 90-degree slice
+        if now < self._state_end_time:
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_direction * self._rotation_angular_speed
+            return True
+
+        # 90 degrees done — check if the path ahead is clear
+        if snapshot.front >= self._clear_distance and snapshot.side_escape is None:
+            self._transition(DRIVE)
+            return False
+
+        # Still blocked: try the opposite 90 degrees if attempts remain
+        self._rotation_attempts += 1
+        if self._rotation_attempts < self._max_rotation_attempts:
+            self._turn_direction = -self._turn_direction
+            self._state_end_time = now + self._rotation_90_sec
+            self.get_logger().info(
+                f'Rotate attempt {self._rotation_attempts}/{self._max_rotation_attempts}'
+                f' — flipping to {"left" if self._turn_direction > 0 else "right"}'
+            )
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_direction * self._rotation_angular_speed
+            return True
+
+        # All rotation attempts exhausted — back up and try again
+        self.get_logger().warn('All rotation attempts failed — backing up')
+        self._start_backup(snapshot, now)
+        return True
+
+    # ── BACKUP ────────────────────────────────────────────────────────────────
+
+    def _needs_backup(self, snapshot: Snapshot) -> bool:
+        if snapshot.dynamic_candidate:
+            return False
+        if not (snapshot.static_obstacle or snapshot.emergency):
+            return False
+        return math.isfinite(snapshot.front) and snapshot.front <= self._face_wall_distance
+
+    def _start_backup(self, snapshot: Snapshot, now: float):
+        self._transition(BACKUP, self._backup_sec)
+
+    def _handle_backup(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
+        rear_blocked = (
+            math.isfinite(snapshot.rear)
+            and snapshot.rear < self._backup_rear_stop_distance
+        )
+        if not rear_blocked and now < self._state_end_time:
+            twist.linear.x = -abs(self._backup_speed)
+            twist.angular.z = 0.0
+            return True
+
+        # Backup done — start a fresh rotation search
+        self._start_rotate(snapshot, now)
+        twist.linear.x = 0.0
+        twist.angular.z = self._turn_direction * self._rotation_angular_speed
+        return True
+
+    # ── DRIVE straight with corridor centering ────────────────────────────────
+
+    def _drive_straight(self, twist: Twist, snapshot: Snapshot):
+        twist.linear.x = self._max_speed
+        twist.angular.z = 0.0
+
+        if snapshot.front < self._slow_distance:
+            twist.linear.x = self._min_speed
+
+        if (
+                math.isfinite(snapshot.left)
+                and math.isfinite(snapshot.right)
+                and min(snapshot.left, snapshot.right) < self._side_balance_distance):
+            corridor_error = snapshot.left - snapshot.right
+            twist.angular.z = _clamp(
+                self._corridor_kp * corridor_error,
+                -self._drive_max_angular_speed,
+                self._drive_max_angular_speed,
+            )
+
+    # ── Snapshot ──────────────────────────────────────────────────────────────
 
     def _snapshot(self) -> Snapshot:
         data = self._latest_obstacles or {}
@@ -381,21 +487,14 @@ class ObstacleAvoidanceNode(Node):
             'lidar' in source
             or lidar_front < self._obstacle_distance
         )
-        lidar_clear = (
-            not lidar_available
-            or not lidar_obstacle
-            and lidar_front >= self._obstacle_distance
-        )
         depth_obstacle = depth_available and (
             'depth' in source
             or depth_front < self._obstacle_distance
         )
-        depth_double_check = bool(lidar_clear and depth_obstacle)
-
         static_obstacle = lidar_obstacle
         dynamic_candidate = bool(
             fused.get('dynamic_obstacle', False)
-            or depth_double_check
+            or (not lidar_obstacle and depth_obstacle)
         )
         emergency = bool(fused.get('emergency', False))
         tof_emergency = bool(emergency and 'tof' in source)
@@ -424,7 +523,6 @@ class ObstacleAvoidanceNode(Node):
             depth_front=depth_front,
             lidar_obstacle=lidar_obstacle,
             depth_obstacle=depth_obstacle,
-            depth_double_check=depth_double_check,
             static_obstacle=static_obstacle,
             dynamic_candidate=dynamic_candidate,
             emergency=emergency,
@@ -432,158 +530,6 @@ class ObstacleAvoidanceNode(Node):
             dead_end=dead_end,
             side_escape=side_escape,
         )
-
-    def _handle_dynamic_check(
-            self,
-            twist: Twist,
-            snapshot: Snapshot,
-            now: float) -> bool:
-        if snapshot.dynamic_candidate:
-            self._dynamic_seen_frames += 1
-            self._dynamic_clear_seen_frames = 0
-        else:
-            self._dynamic_clear_seen_frames += 1
-
-        if self._dynamic_clear_seen_frames >= self._dynamic_clear_frames:
-            self._transition(DRIVE)
-            self._reset_dynamic_check()
-            return False
-
-        if self._dynamic_seen_frames >= self._dynamic_check_frames:
-            self._reset_dynamic_check()
-            self._set_turn_direction(snapshot, now, force=True)
-            self._transition(AVOID)
-            self._drive_avoid(twist, snapshot, now)
-            return True
-
-        return True
-
-    def _handle_backup_escape(
-            self,
-            twist: Twist,
-            snapshot: Snapshot,
-            now: float) -> bool:
-        rear_blocked = (
-            math.isfinite(snapshot.rear)
-            and snapshot.rear < self._backup_rear_stop_distance
-        )
-        if not rear_blocked and now < self._state_end_time:
-            twist.linear.x = -abs(self._backup_speed)
-            twist.angular.z = 0.0
-            return True
-
-        self._start_deadend_turn(snapshot, now)
-        twist.linear.x = 0.0
-        twist.angular.z = self._turn_direction * self._max_angular_speed
-        return True
-
-    def _handle_deadend_turn(
-            self,
-            twist: Twist,
-            snapshot: Snapshot,
-            now: float) -> bool:
-        if snapshot.side_escape is not None:
-            self._turn_direction = snapshot.side_escape
-
-        path_clear = (
-            snapshot.front >= self._clear_distance
-            and snapshot.side_escape is None
-        )
-        if path_clear and now >= self._state_end_time:
-            self._transition(DRIVE)
-            return False
-
-        if now >= self._state_end_time:
-            if (self._turn_out_start_time is not None
-                    and now - self._turn_out_start_time >= self._turn_reversal_sec):
-                self._turn_direction = -self._turn_direction
-                self._turn_out_start_time = now
-            self._state_end_time = now + self._turn_out_sec
-
-        twist.angular.z = self._turn_direction * self._max_angular_speed
-        return True
-
-    def _start_deadend_turn(self, snapshot: Snapshot, now: float):
-        self._reset_dynamic_check()
-        self._set_turn_direction(snapshot, now, force=True)
-        self._turn_out_start_time = now
-        self._transition(TURN_OUT, self._turn_out_sec)
-
-    def _needs_backup_escape(self, snapshot: Snapshot) -> bool:
-        if snapshot.dynamic_candidate:
-            return False
-        if not (snapshot.static_obstacle or snapshot.emergency):
-            return False
-        return math.isfinite(snapshot.front) and snapshot.front <= self._face_wall_distance
-
-    def _start_backup_escape(self, snapshot: Snapshot, now: float):
-        self._reset_dynamic_check()
-        self._set_turn_direction(snapshot, now, force=True)
-        self._transition(BACKUP, self._backup_sec)
-
-    def _drive_avoid(self, twist: Twist, snapshot: Snapshot, now: float):
-        direction = self._set_turn_direction(snapshot, now)
-        twist.linear.x = 0.0
-
-        if snapshot.side_escape is not None:
-            twist.angular.z = snapshot.side_escape * self._max_angular_speed
-            return
-
-        if snapshot.target is not None and snapshot.front >= self._clear_distance:
-            twist.angular.z = _clamp(
-                self._gap_kp * snapshot.target.angle,
-                -self._max_angular_speed,
-                self._max_angular_speed,
-            )
-            return
-
-        twist.angular.z = direction * self._max_angular_speed
-
-    def _drive_straight(self, twist: Twist, snapshot: Snapshot):
-        twist.linear.x = self._max_speed
-        twist.angular.z = 0.0
-
-        if snapshot.front < self._slow_distance:
-            twist.linear.x = self._min_speed
-
-        if (
-                math.isfinite(snapshot.left)
-                and math.isfinite(snapshot.right)
-                and min(snapshot.left, snapshot.right) < self._side_balance_distance):
-            corridor_error = snapshot.left - snapshot.right
-            twist.angular.z = _clamp(
-                self._corridor_kp * corridor_error,
-                -self._drive_max_angular_speed,
-                self._drive_max_angular_speed,
-            )
-
-    def _set_turn_direction(
-            self,
-            snapshot: Snapshot,
-            now: float,
-            force: bool = False) -> float:
-        if not force and now < self._turn_direction_until:
-            return self._turn_direction
-
-        if snapshot.side_escape is not None:
-            self._turn_direction = snapshot.side_escape
-        elif (
-                snapshot.target is not None
-                and math.isfinite(snapshot.target.angle)
-                and abs(snapshot.target.angle) > 0.12
-                and snapshot.front >= self._obstacle_distance):
-            # Only steer toward gap when front is not actively blocked;
-            # gap angle is too noisy close-up and causes oscillation.
-            self._turn_direction = 1.0 if snapshot.target.angle > 0.0 else -1.0
-        else:
-            self._turn_direction = self._clearer_side(snapshot.left, snapshot.right)
-
-        self._turn_direction_until = now + self._turn_direction_hold_sec
-        return self._turn_direction
-
-    def _reset_dynamic_check(self):
-        self._dynamic_seen_frames = 0
-        self._dynamic_clear_seen_frames = 0
 
     def _front_spacing(self, value: float) -> float:
         if not math.isfinite(value):
@@ -625,6 +571,8 @@ class ObstacleAvoidanceNode(Node):
             return 1.0
         return None
 
+    # ── Logging ───────────────────────────────────────────────────────────────
+
     def _log_decision(self, reason: str, snapshot: Snapshot | None = None):
         if not self._debug_decisions:
             return
@@ -641,19 +589,33 @@ class ObstacleAvoidanceNode(Node):
         self._debug_transition = None
         snapshot = snapshot or self._snapshot()
 
+        nearest = min(
+            v for v in (snapshot.front_raw, snapshot.left, snapshot.right, snapshot.rear)
+            if math.isfinite(v)
+        ) if any(
+            math.isfinite(v)
+            for v in (snapshot.front_raw, snapshot.left, snapshot.right, snapshot.rear)
+        ) else math.inf
+
+        nearest_cm = _fmt_cm(nearest)
+        front_cm = _fmt_cm(snapshot.front_raw)
+        left_cm = _fmt_cm(snapshot.left)
+        right_cm = _fmt_cm(snapshot.right)
+
         if self._state in (DRIVE, NO_OBSTACLES):
+            self.get_logger().info(
+                f'[NAV] state={self._state} nearest={nearest_cm} '
+                f'front={front_cm} left={left_cm} right={right_cm} reason={reason}'
+            )
             return
 
         obs_type = 'dynamic' if snapshot.dynamic_candidate else 'static'
         dead_end = 'YES' if snapshot.dead_end else 'no'
         spacing_cm = _fmt_cm(snapshot.front)
-        raw_front_cm = _fmt_cm(snapshot.front_raw)
-        left_cm = _fmt_cm(snapshot.left)
-        right_cm = _fmt_cm(snapshot.right)
 
         self.get_logger().warn(
             f'[OBSTACLE] state={self._state} type={obs_type} '
-            f'spacing={spacing_cm} raw_front={raw_front_cm} '
+            f'nearest={nearest_cm} front={front_cm} spacing={spacing_cm} '
             f'left={left_cm} right={right_cm} '
             f'dead_end={dead_end} reason={reason}'
         )
@@ -668,6 +630,8 @@ class ObstacleAvoidanceNode(Node):
         msg.header.frame_id = str(self._cmd_vel_frame_id)
         msg.twist = twist
         self._vel_pub.publish(msg)
+
+    # ── Battery safety ────────────────────────────────────────────────────────
 
     def _battery_stop_required(self, now: float) -> bool:
         if self._battery_voltage is None or self._last_battery_time is None:
@@ -693,8 +657,7 @@ class ObstacleAvoidanceNode(Node):
                 age = now - self._last_battery_time
                 self._last_battery_warn_time = now
                 self.get_logger().error(
-                    f'[BATTERY] stale battery reading age={age:.1f}s; '
-                    'stopping robot.'
+                    f'[BATTERY] stale battery reading age={age:.1f}s; stopping robot.'
                 )
             return
 
