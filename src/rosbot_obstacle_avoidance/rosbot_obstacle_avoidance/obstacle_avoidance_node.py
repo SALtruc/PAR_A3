@@ -6,6 +6,7 @@ Simple robot-vacuum style policy:
 - use S2 LIDAR as the primary obstacle check;
 - when LIDAR is clear, use OAK-D depth as a secondary double-check;
 - stop and confirm depth/dynamic obstacles for a few frames before avoiding;
+- if the robot is already face-close to a static obstacle, back up first;
 - in a dead end, keep turning the chosen direction until sensors show a path.
 
 There is no map, no route, and no long-term memory.
@@ -109,11 +110,15 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('gap_kp', 0.65)
         self.declare_parameter('corridor_kp', 0.14)
 
-        self.declare_parameter('obstacle_distance', 0.30)
-        self.declare_parameter('clear_distance', 0.40)
-        self.declare_parameter('slow_distance', 0.55)
-        self.declare_parameter('front_body_offset_m', 0.10)
+        self.declare_parameter('obstacle_distance', 0.35)
+        self.declare_parameter('clear_distance', 0.50)
+        self.declare_parameter('slow_distance', 0.65)
+        self.declare_parameter('front_body_offset_m', 0.11)
         self.declare_parameter('dynamic_stop_distance', 0.80)
+        self.declare_parameter('face_wall_distance', 0.20)
+        self.declare_parameter('backup_speed', 0.08)
+        self.declare_parameter('backup_sec', 0.90)
+        self.declare_parameter('backup_rear_stop_distance', 0.25)
         self.declare_parameter('dynamic_check_frames', 4)
         self.declare_parameter('dynamic_clear_frames', 2)
         self.declare_parameter('obstacle_stale_sec', 1.0)
@@ -150,6 +155,14 @@ class ObstacleAvoidanceNode(Node):
         )
         self._dynamic_stop_distance = float(
             self.get_parameter('dynamic_stop_distance').value
+        )
+        self._face_wall_distance = float(
+            self.get_parameter('face_wall_distance').value
+        )
+        self._backup_speed = float(self.get_parameter('backup_speed').value)
+        self._backup_sec = float(self.get_parameter('backup_sec').value)
+        self._backup_rear_stop_distance = float(
+            self.get_parameter('backup_rear_stop_distance').value
         )
         self._dynamic_check_frames = max(
             1,
@@ -249,6 +262,12 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
+        if self._state == BACKUP:
+            if self._handle_backup_escape(twist, snapshot, now):
+                self._log_decision('backup_escape', snapshot)
+                self._publish_velocity(twist)
+                return
+
         if self._state == DYNAMIC_AVOID:
             if self._handle_dynamic_check(twist, snapshot, now):
                 self._log_decision('dynamic_check', snapshot)
@@ -266,6 +285,13 @@ class ObstacleAvoidanceNode(Node):
             self._dynamic_seen_frames = 1
             self._dynamic_clear_seen_frames = 0
             self._log_decision('dynamic_candidate_stop', snapshot)
+            self._publish_velocity(twist)
+            return
+
+        if self._needs_backup_escape(snapshot):
+            self._start_backup_escape(snapshot, now)
+            self._handle_backup_escape(twist, snapshot, now)
+            self._log_decision('face_wall_backup', snapshot)
             self._publish_velocity(twist)
             return
 
@@ -371,7 +397,6 @@ class ObstacleAvoidanceNode(Node):
             twist: Twist,
             snapshot: Snapshot,
             now: float) -> bool:
-        del twist
         if snapshot.dynamic_candidate:
             self._dynamic_seen_frames += 1
             self._dynamic_clear_seen_frames = 0
@@ -390,6 +415,25 @@ class ObstacleAvoidanceNode(Node):
             self._drive_avoid(twist, snapshot, now)
             return True
 
+        return True
+
+    def _handle_backup_escape(
+            self,
+            twist: Twist,
+            snapshot: Snapshot,
+            now: float) -> bool:
+        rear_blocked = (
+            math.isfinite(snapshot.rear)
+            and snapshot.rear < self._backup_rear_stop_distance
+        )
+        if not rear_blocked and now < self._state_end_time:
+            twist.linear.x = -abs(self._backup_speed)
+            twist.angular.z = 0.0
+            return True
+
+        self._start_deadend_turn(snapshot, now)
+        twist.linear.x = 0.0
+        twist.angular.z = self._turn_direction * self._max_angular_speed
         return True
 
     def _handle_deadend_turn(
@@ -418,6 +462,18 @@ class ObstacleAvoidanceNode(Node):
         self._reset_dynamic_check()
         self._set_turn_direction(snapshot, now, force=True)
         self._transition(TURN_OUT, self._turn_out_sec)
+
+    def _needs_backup_escape(self, snapshot: Snapshot) -> bool:
+        if snapshot.dynamic_candidate:
+            return False
+        if not (snapshot.static_obstacle or snapshot.emergency):
+            return False
+        return math.isfinite(snapshot.front) and snapshot.front <= self._face_wall_distance
+
+    def _start_backup_escape(self, snapshot: Snapshot, now: float):
+        self._reset_dynamic_check()
+        self._set_turn_direction(snapshot, now, force=True)
+        self._transition(BACKUP, self._backup_sec)
 
     def _drive_avoid(self, twist: Twist, snapshot: Snapshot, now: float):
         direction = self._set_turn_direction(snapshot, now)

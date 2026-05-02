@@ -30,12 +30,18 @@ def generate_launch_description():
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
         DeclareLaunchArgument('max_speed', default_value='0.10'),
-        DeclareLaunchArgument('emergency_distance', default_value='0.12'),
-        DeclareLaunchArgument('obstacle_distance', default_value='0.30'),
-        DeclareLaunchArgument('clear_distance', default_value='0.40'),
-        DeclareLaunchArgument('slow_distance', default_value='0.55'),
-        DeclareLaunchArgument('front_body_offset_m', default_value='0.10'),
-        DeclareLaunchArgument('depth_obstacle_distance', default_value='0.45'),
+        DeclareLaunchArgument('emergency_distance', default_value='0.18'),
+        DeclareLaunchArgument('perception_obstacle_distance', default_value='0.45'),
+        DeclareLaunchArgument('perception_clear_distance', default_value='0.60'),
+        DeclareLaunchArgument('obstacle_distance', default_value='0.35'),
+        DeclareLaunchArgument('clear_distance', default_value='0.50'),
+        DeclareLaunchArgument('slow_distance', default_value='0.65'),
+        DeclareLaunchArgument('front_body_offset_m', default_value='0.11'),
+        DeclareLaunchArgument('face_wall_distance', default_value='0.20'),
+        DeclareLaunchArgument('backup_speed', default_value='0.08'),
+        DeclareLaunchArgument('backup_sec', default_value='0.90'),
+        DeclareLaunchArgument('backup_rear_stop_distance', default_value='0.25'),
+        DeclareLaunchArgument('depth_obstacle_distance', default_value='0.55'),
         DeclareLaunchArgument('front_center_angle_deg', default_value='0.0'),
         DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
         DeclareLaunchArgument('obstacle_hold_sec', default_value='0.35'),
@@ -68,8 +74,10 @@ def generate_launch_description():
                 'use_tof': LaunchConfiguration('use_tof'),
                 'obstacle_topic': LaunchConfiguration('obstacle_topic'),
                 'emergency_distance': LaunchConfiguration('emergency_distance'),
-                'obstacle_distance': LaunchConfiguration('obstacle_distance'),
-                'clear_distance': LaunchConfiguration('clear_distance'),
+                'obstacle_distance': LaunchConfiguration(
+                    'perception_obstacle_distance'
+                ),
+                'clear_distance': LaunchConfiguration('perception_clear_distance'),
                 'front_center_angle_deg': LaunchConfiguration(
                     'front_center_angle_deg'
                 ),
@@ -106,6 +114,12 @@ def generate_launch_description():
                 'clear_distance': LaunchConfiguration('clear_distance'),
                 'slow_distance': LaunchConfiguration('slow_distance'),
                 'front_body_offset_m': LaunchConfiguration('front_body_offset_m'),
+                'face_wall_distance': LaunchConfiguration('face_wall_distance'),
+                'backup_speed': LaunchConfiguration('backup_speed'),
+                'backup_sec': LaunchConfiguration('backup_sec'),
+                'backup_rear_stop_distance': LaunchConfiguration(
+                    'backup_rear_stop_distance'
+                ),
                 'dynamic_check_frames': LaunchConfiguration('dynamic_check_frames'),
                 'dynamic_clear_frames': LaunchConfiguration('dynamic_clear_frames'),
                 'side_protect_distance': LaunchConfiguration(

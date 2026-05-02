@@ -78,8 +78,8 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('publish_hz', 20.0)
 
         self.declare_parameter('emergency_distance', 0.18)
-        self.declare_parameter('obstacle_distance', 0.55)
-        self.declare_parameter('clear_distance', 0.75)
+        self.declare_parameter('obstacle_distance', 0.45)
+        self.declare_parameter('clear_distance', 0.60)
         self.declare_parameter('front_center_angle_deg', 0.0)
         self.declare_parameter('front_angle_deg', 30.0)
         self.declare_parameter('front_percentile', 15.0)
@@ -90,7 +90,7 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('gap_angle_limit_deg', 110.0)
         self.declare_parameter('sensor_stale_sec', 1.0)
 
-        self.declare_parameter('depth_obstacle_distance', 0.65)
+        self.declare_parameter('depth_obstacle_distance', 0.55)
         self.declare_parameter('depth_center_fraction', 0.33)
         self.declare_parameter('depth_side_fraction', 0.30)
         self.declare_parameter('depth_height_fraction', 0.40)

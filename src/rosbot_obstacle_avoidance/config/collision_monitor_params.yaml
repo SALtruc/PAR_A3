@@ -1,0 +1,111 @@
+# Optional Project C safety shield using Nav2 Collision Monitor.
+#
+# The custom reactive controller publishes to /cmd_vel_raw. Collision Monitor is
+# the last velocity filter and publishes the final command to /cmd_vel.
+
+collision_monitor:
+  ros__parameters:
+    enabled: true
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: /cmd_vel_raw
+    cmd_vel_out_topic: /cmd_vel
+    state_topic: /collision_monitor_state
+    transform_tolerance: 0.3
+    source_timeout: 0.7
+    base_shift_correction: false
+    stop_pub_timeout: 2.0
+    enable_stamped_cmd_vel: true
+
+    polygons: ["VelocityStop", "VelocitySlow"]
+
+    VelocityStop:
+      type: velocity_polygon
+      action_type: stop
+      min_points: 3
+      trigger_consecutive_points: 1
+      release_consecutive_points: 2
+      visualize: true
+      polygon_pub_topic: velocity_polygon_stop
+      enabled: true
+      holonomic: false
+      velocity_polygons: ["forward", "backward", "rotation", "stopped"]
+      forward:
+        points: "[[0.36, 0.25], [0.36, -0.25], [-0.02, -0.25], [-0.02, 0.25]]"
+        linear_min: 0.02
+        linear_max: 1.0
+        theta_min: -1.0
+        theta_max: 1.0
+      backward:
+        points: "[[0.08, 0.25], [0.08, -0.25], [-0.35, -0.25], [-0.35, 0.25]]"
+        linear_min: -1.0
+        linear_max: -0.02
+        theta_min: -1.0
+        theta_max: 1.0
+      rotation:
+        points: "[[0.22, 0.25], [0.22, -0.25], [-0.22, -0.25], [-0.22, 0.25]]"
+        linear_min: -0.02
+        linear_max: 0.02
+        theta_min: -1.0
+        theta_max: 1.0
+      stopped:
+        points: "[[0.20, 0.22], [0.20, -0.22], [-0.20, -0.22], [-0.20, 0.22]]"
+        linear_min: -1.0
+        linear_max: 1.0
+        theta_min: -1.0
+        theta_max: 1.0
+
+    VelocitySlow:
+      type: velocity_polygon
+      action_type: slowdown
+      min_points: 4
+      slowdown_ratio: 0.35
+      trigger_consecutive_points: 1
+      release_consecutive_points: 2
+      visualize: true
+      polygon_pub_topic: velocity_polygon_slowdown
+      enabled: true
+      holonomic: false
+      velocity_polygons: ["forward", "backward", "rotation", "stopped"]
+      forward:
+        points: "[[0.75, 0.45], [0.75, -0.45], [-0.02, -0.45], [-0.02, 0.45]]"
+        linear_min: 0.02
+        linear_max: 1.0
+        theta_min: -1.0
+        theta_max: 1.0
+      backward:
+        points: "[[0.05, 0.45], [0.05, -0.45], [-0.65, -0.45], [-0.65, 0.45]]"
+        linear_min: -1.0
+        linear_max: -0.02
+        theta_min: -1.0
+        theta_max: 1.0
+      rotation:
+        points: "[[0.45, 0.45], [0.45, -0.45], [-0.45, -0.45], [-0.45, 0.45]]"
+        linear_min: -0.02
+        linear_max: 0.02
+        theta_min: -1.0
+        theta_max: 1.0
+      stopped:
+        points: "[[0.45, 0.45], [0.45, -0.45], [-0.45, -0.45], [-0.45, 0.45]]"
+        linear_min: -1.0
+        linear_max: 1.0
+        theta_min: -1.0
+        theta_max: 1.0
+
+    observation_sources: ["scan", "pointcloud"]
+
+    scan:
+      type: scan
+      topic: /scan_filtered
+      source_timeout: 0.4
+      enabled: true
+
+    pointcloud:
+      type: pointcloud
+      topic: /oak/points
+      transport_type: raw
+      min_height: 0.03
+      max_height: 1.20
+      min_range: 0.10
+      source_timeout: 0.8
+      enabled: true
