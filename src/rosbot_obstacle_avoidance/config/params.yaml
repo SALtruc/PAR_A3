@@ -14,9 +14,9 @@ obstacle_perception:
     use_tof: true
     publish_hz: 20.0
 
-    emergency_distance: 0.10
-    obstacle_distance: 0.15
-    clear_distance: 0.25
+    emergency_distance: 0.12
+    obstacle_distance: 0.20
+    clear_distance: 0.30
     front_center_angle_deg: 0.0
     front_angle_deg: 40.0
     front_percentile: 15.0
@@ -71,11 +71,13 @@ obstacle_avoidance:
     corridor_kp: 0.14
 
     # distance thresholds
-    obstacle_distance: 0.15      # react when front <= 15 cm
-    clear_distance: 0.20         # path clear when front >= 20 cm
-    slow_distance: 0.18          # slow down when this close
+    # snapshot.front = lidar_reading - front_body_offset (0.11m)
+    # obstacle_distance: 0.25 → triggers when lidar reads ≤ 0.36m = 25cm from front edge
+    obstacle_distance: 0.25
+    clear_distance: 0.35         # exit avoidance when front spacing >= 35 cm
+    slow_distance: 0.40          # slow down when front spacing < 40 cm
     front_body_offset_m: 0.11
-    face_wall_distance: 0.10     # force backup when <= 10 cm
+    face_wall_distance: 0.12     # force backup when spacing <= 12 cm
 
     # dodge: creep forward + turn to squeeze past
     dodge_clearance: 0.25        # min side room to attempt dodge
@@ -92,10 +94,10 @@ obstacle_avoidance:
     backup_rear_stop_distance: 0.25
 
     side_balance_distance: 0.45
-    side_protect_distance: 0.12
-    require_battery_ok: true
-    min_battery_voltage: 11.1
-    warn_battery_voltage: 11.4
+    side_protect_distance: 0.20
+    require_battery_ok: false
+    min_battery_voltage: 8.5
+    warn_battery_voltage: 9.0
     battery_stale_sec: 3.0
     debug_decisions: true
     debug_period_sec: 1.0

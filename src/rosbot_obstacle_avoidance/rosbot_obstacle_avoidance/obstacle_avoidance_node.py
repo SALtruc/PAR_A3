@@ -319,6 +319,14 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
+        # Side too close — dodge away even when front is clear
+        if snapshot.side_escape is not None:
+            self._start_dodge(snapshot, now)
+            self._handle_dodge(twist, snapshot, now)
+            self._log_decision('side_danger', snapshot)
+            self._publish_velocity(twist)
+            return
+
         # Obstacle at stop distance: try dodge first, fall back to rotate
         if snapshot.front <= self._obstacle_distance:
             has_side_room = (
