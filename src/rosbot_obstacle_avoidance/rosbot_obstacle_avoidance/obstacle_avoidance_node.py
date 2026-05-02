@@ -212,15 +212,27 @@ class ObstacleAvoidanceNode(Node):
         left = _finite_or_inf(fused.get('left_distance'))
         right = _finite_or_inf(fused.get('right_distance'))
         rear = _finite_or_inf(fused.get('rear_distance'))
+        source = list(fused.get('source', []))
         emergency = bool(fused.get('emergency', False))
         blocked = bool(fused.get('blocked', False))
         dead_end = bool(fused.get('dead_end', False))
         dynamic_obstacle = bool(fused.get('dynamic_obstacle', False))
         target = self._target_from_fused(fused)
 
+        if not self._any_sensor_available(self._latest_obstacles):
+            self._transition(NO_OBSTACLES)
+            self._log_decision('no_active_sensors', twist, fused, target)
+            self._publish_velocity(twist)
+            return
+
         if emergency:
-            self._transition(EMERGENCY)
-            self._log_decision('emergency_stop', twist, fused, target)
+            if 'tof' not in source and rear > self._backup_clear_distance:
+                self._transition(BACKUP, self._backup_sec)
+                twist.linear.x = -self._reverse_speed
+                self._log_decision('lidar_emergency_backup', twist, fused, target)
+            else:
+                self._transition(EMERGENCY)
+                self._log_decision('emergency_stop', twist, fused, target)
             self._publish_velocity(twist)
             return
 
@@ -269,7 +281,7 @@ class ObstacleAvoidanceNode(Node):
             self._transition(DYNAMIC_AVOID, self._dynamic_hold_sec)
             self._drive_dynamic_obstacle(twist, target)
             self._log_decision('dynamic_obstacle_confirmed', twist, fused, target)
-        elif blocked or front < self._obstacle_distance:
+        elif blocked or front < self._clear_distance:
             self._transition(AVOID)
             self._drive_toward_gap(twist, target, front, left, right)
             self._log_decision('blocked_or_too_close', twist, fused, target)
@@ -289,6 +301,15 @@ class ObstacleAvoidanceNode(Node):
         if width <= 0 or not math.isfinite(angle):
             return None
         return GapTarget(angle=angle, clearance=clearance, width=width)
+
+    @staticmethod
+    def _any_sensor_available(data: dict | None) -> bool:
+        if not data:
+            return False
+        return any(
+            bool(data.get(name, {}).get('available', False))
+            for name in ('lidar', 'depth', 'tof')
+        )
 
     def _drive_dynamic_obstacle(self, twist: Twist, target: GapTarget | None):
         # Dynamic objects are usually people. Stop first; the next cycle can
@@ -351,7 +372,7 @@ class ObstacleAvoidanceNode(Node):
             )
 
         if front < self._clear_distance:
-            twist.linear.x = max(self._min_speed, self._max_speed * 0.55)
+            twist.linear.x = 0.0
 
     def _apply_wander(
             self,
