@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import rclpy
 from geometry_msgs.msg import Twist, TwistStamped
 from rclpy.node import Node
+from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
 
 
@@ -97,6 +98,7 @@ class ObstacleAvoidanceNode(Node):
         super().__init__('obstacle_avoidance')
 
         self.declare_parameter('obstacle_topic', '/obstacle_representation')
+        self.declare_parameter('battery_topic', '/battery')
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
         self.declare_parameter('cmd_vel_stamped', True)
         self.declare_parameter('cmd_vel_frame_id', 'base_link')
@@ -123,13 +125,18 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('dynamic_clear_frames', 2)
         self.declare_parameter('obstacle_stale_sec', 1.0)
         self.declare_parameter('turn_out_sec', 0.90)
-        self.declare_parameter('side_balance_distance', 0.80)
-        self.declare_parameter('side_protect_distance', 0.30)
+        self.declare_parameter('side_balance_distance', 0.45)
+        self.declare_parameter('side_protect_distance', 0.12)
         self.declare_parameter('turn_direction_hold_sec', 0.80)
+        self.declare_parameter('require_battery_ok', True)
+        self.declare_parameter('min_battery_voltage', 11.1)
+        self.declare_parameter('warn_battery_voltage', 11.4)
+        self.declare_parameter('battery_stale_sec', 3.0)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 1.0)
 
         obstacle_topic = self.get_parameter('obstacle_topic').value
+        battery_topic = self.get_parameter('battery_topic').value
         cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
         state_topic = self.get_parameter('state_topic').value
         self._cmd_vel_stamped = _as_bool(self.get_parameter('cmd_vel_stamped').value)
@@ -183,6 +190,18 @@ class ObstacleAvoidanceNode(Node):
         self._turn_direction_hold_sec = float(
             self.get_parameter('turn_direction_hold_sec').value
         )
+        self._require_battery_ok = _as_bool(
+            self.get_parameter('require_battery_ok').value
+        )
+        self._min_battery_voltage = float(
+            self.get_parameter('min_battery_voltage').value
+        )
+        self._warn_battery_voltage = float(
+            self.get_parameter('warn_battery_voltage').value
+        )
+        self._battery_stale_sec = float(
+            self.get_parameter('battery_stale_sec').value
+        )
         self._debug_decisions = _as_bool(self.get_parameter('debug_decisions').value)
         self._debug_period_sec = float(self.get_parameter('debug_period_sec').value)
 
@@ -194,10 +213,14 @@ class ObstacleAvoidanceNode(Node):
         self._turn_direction_until = 0.0
         self._dynamic_seen_frames = 0
         self._dynamic_clear_seen_frames = 0
+        self._battery_voltage: float | None = None
+        self._last_battery_time: float | None = None
+        self._last_battery_warn_time = 0.0
         self._last_debug_time = 0.0
         self._debug_transition: str | None = None
 
         self.create_subscription(String, obstacle_topic, self._on_obstacles, 10)
+        self.create_subscription(BatteryState, battery_topic, self._on_battery, 10)
         vel_type = TwistStamped if self._cmd_vel_stamped else Twist
         self._vel_pub = self.create_publisher(vel_type, cmd_vel_topic, 10)
         self._state_pub = self.create_publisher(String, state_topic, 10)
@@ -206,6 +229,7 @@ class ObstacleAvoidanceNode(Node):
         self.get_logger().info(
             f'Obstacle decision ready. obstacles={obstacle_topic}, '
             f'cmd_vel={cmd_vel_topic} ({vel_type.__name__}), '
+            f'battery={battery_topic}, '
             f'debug_decisions={self._debug_decisions}'
         )
 
@@ -215,6 +239,11 @@ class ObstacleAvoidanceNode(Node):
             self._last_obstacle_time = time.monotonic()
         except json.JSONDecodeError:
             self.get_logger().warn('Ignored invalid obstacle representation JSON.')
+
+    def _on_battery(self, msg: BatteryState):
+        if math.isfinite(msg.voltage) and msg.voltage > 0.0:
+            self._battery_voltage = float(msg.voltage)
+            self._last_battery_time = time.monotonic()
 
     def _obstacles_recent(self) -> bool:
         return (
@@ -240,6 +269,15 @@ class ObstacleAvoidanceNode(Node):
     def _control_loop(self):
         twist = Twist()
         now = time.monotonic()
+
+        if self._battery_stop_required(now):
+            self._transition(EMERGENCY)
+            self._reset_dynamic_check()
+            self._log_battery_safety(now)
+            self._publish_velocity(twist)
+            return
+
+        self._log_battery_safety(now)
 
         if self._latest_obstacles is None or not self._obstacles_recent():
             self._transition(NO_OBSTACLES)
@@ -622,6 +660,50 @@ class ObstacleAvoidanceNode(Node):
         msg.header.frame_id = str(self._cmd_vel_frame_id)
         msg.twist = twist
         self._vel_pub.publish(msg)
+
+    def _battery_stop_required(self, now: float) -> bool:
+        if self._battery_voltage is None or self._last_battery_time is None:
+            return self._require_battery_ok
+        if now - self._last_battery_time > self._battery_stale_sec:
+            return self._require_battery_ok
+        return self._battery_voltage < self._min_battery_voltage
+
+    def _log_battery_safety(self, now: float):
+        if now - self._last_battery_warn_time < 5.0:
+            return
+
+        if self._battery_voltage is None or self._last_battery_time is None:
+            if self._require_battery_ok:
+                self._last_battery_warn_time = now
+                self.get_logger().error(
+                    '[BATTERY] no battery reading yet; stopping robot.'
+                )
+            return
+
+        if now - self._last_battery_time > self._battery_stale_sec:
+            if self._require_battery_ok:
+                age = now - self._last_battery_time
+                self._last_battery_warn_time = now
+                self.get_logger().error(
+                    f'[BATTERY] stale battery reading age={age:.1f}s; '
+                    'stopping robot.'
+                )
+            return
+
+        if self._battery_voltage >= self._warn_battery_voltage:
+            return
+
+        self._last_battery_warn_time = now
+        if self._battery_voltage < self._min_battery_voltage:
+            self.get_logger().error(
+                f'[BATTERY] voltage={self._battery_voltage:.2f}V below '
+                f'min={self._min_battery_voltage:.2f}V; stopping robot.'
+            )
+        else:
+            self.get_logger().warn(
+                f'[BATTERY] voltage={self._battery_voltage:.2f}V below '
+                f'warning={self._warn_battery_voltage:.2f}V; test gently.'
+            )
 
 
 def main(args=None):

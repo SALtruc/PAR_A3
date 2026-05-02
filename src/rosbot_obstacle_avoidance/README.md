@@ -18,11 +18,11 @@ current fused sensor snapshot.
 | Scenario | Controller behaviour |
 |---|---|
 | Free roaming | Drive straight while the live sensor snapshot is clear |
-| Static obstacle | S2 LIDAR detects spacing range, then the robot stops forward motion and turns toward a clear gap |
+| Static obstacle | S2 LIDAR detects a footprint-width path obstacle, then the robot stops forward motion and turns toward a clear gap |
 | Face-close wall | If static spacing is below `face_wall_distance`, reverse for `backup_sec`, then turn out |
 | Dynamic obstacle | If depth/dynamic evidence appears while LIDAR is clear, stop first and confirm it over `dynamic_check_frames` |
 | Dead end | Stop, choose one turn direction, and keep turning that direction until current sensors show a path |
-| Narrow passage | Reduce speed and use left/right centering only when sides are close |
+| Narrow passage | Reduce speed and use left/right body-edge clearance to center between close sides |
 | Emergency range | Hard stop when ToF/depth or robust LIDAR front control is below `emergency_distance` |
 
 ## Run
@@ -34,18 +34,21 @@ ros2 launch rosbot_obstacle_avoidance project_c.launch.py \
   cmd_vel_topic:=/cmd_vel
 ```
 
-Safer run with Nav2 Collision Monitor:
+Safer low-speed run:
 
 ```bash
 ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:=/scan_filtered \
   pointcloud_topic:=/oak/points \
-  cmd_vel_topic:=/cmd_vel
+  cmd_vel_topic:=/cmd_vel \
+  max_speed:=0.06 \
+  backup_speed:=0.04
 ```
 
 By default this launches the Project C custom safety policy directly to
 `/cmd_vel`, avoiding a dead command path if optional Nav2 packages are missing
-or ABI-incompatible.
+or ABI-incompatible. It also requires a fresh `/battery` reading above
+`min_battery_voltage` before allowing motion.
 
 Optional Nav2 Collision Monitor layer:
 
@@ -73,6 +76,21 @@ ros2 topic echo /collision_monitor_state
 ```
 
 Logs are written to `~/rosbot_obstacle_logs/project_c_trial_<timestamp>.csv`.
+
+## Pre-Run Safety Check
+
+Do this before a full 5 minute trial on the real robot:
+
+```bash
+ros2 topic echo --once /battery
+ros2 topic hz /scan_filtered
+ros2 topic hz /oak/points
+ros2 topic echo --once /obstacle_representation
+```
+
+Do not run the motors if `/battery` is below `11.1V`. The controller will hold
+`EMERGENCY` and publish zero velocity when the battery topic is missing, stale,
+or below `min_battery_voltage`.
 
 ## Sensor Ablation
 
@@ -109,6 +127,11 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `clear_distance` | `0.50` | Body spacing treated as clear again |
 | `slow_distance` | `0.65` | Body spacing where straight driving slows down before avoidance |
 | `front_body_offset_m` | `0.11` | Approximate distance from front bumper to the range sensor, subtracted in logs/control |
+| `robot_half_width_m` | `0.13` | Half-width of the ROSbot body plus a small margin for side clearance |
+| `front_path_half_width_m` | `0.18` | LIDAR path corridor checked in front of the full robot width |
+| `side_guard_forward_m` | `0.35` | Forward extent of side-edge collision checking |
+| `side_guard_rear_m` | `0.20` | Rear extent of side-edge collision checking |
+| `side_percentile` | `10.0` | Robust percentile used for side-edge clearance |
 | `face_wall_distance` | `0.20` | If a static obstacle is this close to the bumper, back up before turning |
 | `backup_speed` | `0.08` | Reverse speed during face-wall recovery |
 | `backup_sec` | `0.90` | Reverse duration before turning out |
@@ -128,5 +151,9 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
 | `corridor_kp` | `0.14` | Narrow-passage centering strength |
 | `turn_out_sec` | `0.90` | Dead-end turn check interval; if still blocked, it keeps turning |
-| `side_protect_distance` | `0.30` | Stops forward motion and turns away from a close side wall |
+| `side_balance_distance` | `0.45` | Starts gentle centering when either body side is close |
+| `side_protect_distance` | `0.12` | Stops forward motion and turns away when a body side is too close |
 | `turn_direction_hold_sec` | `0.80` | Prevents left/right avoid direction from flipping every scan |
+| `require_battery_ok` | `true` | Requires a fresh battery reading before motion |
+| `min_battery_voltage` | `11.1` | Holds zero velocity below this pack voltage |
+| `warn_battery_voltage` | `11.4` | Logs a low-battery warning but still allows motion |

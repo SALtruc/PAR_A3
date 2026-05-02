@@ -25,6 +25,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_pointcloud', default_value='true'),
         DeclareLaunchArgument('use_tof', default_value='true'),
         DeclareLaunchArgument('obstacle_topic', default_value='/obstacle_representation'),
+        DeclareLaunchArgument('battery_topic', default_value='/battery'),
         DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel'),
         DeclareLaunchArgument('cmd_vel_stamped', default_value='true'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
@@ -48,10 +49,20 @@ def generate_launch_description():
         DeclareLaunchArgument('clear_confirm_sec', default_value='0.20'),
         DeclareLaunchArgument('dynamic_check_frames', default_value='4'),
         DeclareLaunchArgument('dynamic_clear_frames', default_value='2'),
-        DeclareLaunchArgument('side_protect_distance', default_value='0.30'),
+        DeclareLaunchArgument('side_balance_distance', default_value='0.45'),
+        DeclareLaunchArgument('side_protect_distance', default_value='0.12'),
+        DeclareLaunchArgument('robot_half_width_m', default_value='0.13'),
+        DeclareLaunchArgument('front_path_half_width_m', default_value='0.18'),
+        DeclareLaunchArgument('side_guard_forward_m', default_value='0.35'),
+        DeclareLaunchArgument('side_guard_rear_m', default_value='0.20'),
+        DeclareLaunchArgument('side_percentile', default_value='10.0'),
         DeclareLaunchArgument('front_percentile', default_value='15.0'),
         DeclareLaunchArgument('front_close_min_rays', default_value='3'),
         DeclareLaunchArgument('front_close_min_ratio', default_value='0.01'),
+        DeclareLaunchArgument('require_battery_ok', default_value='true'),
+        DeclareLaunchArgument('min_battery_voltage', default_value='11.1'),
+        DeclareLaunchArgument('warn_battery_voltage', default_value='11.4'),
+        DeclareLaunchArgument('battery_stale_sec', default_value='3.0'),
         DeclareLaunchArgument('debug_decisions', default_value='true'),
         DeclareLaunchArgument('debug_period_sec', default_value='1.0'),
     ]
@@ -81,6 +92,15 @@ def generate_launch_description():
                 'front_center_angle_deg': LaunchConfiguration(
                     'front_center_angle_deg'
                 ),
+                'robot_half_width_m': LaunchConfiguration('robot_half_width_m'),
+                'front_path_half_width_m': LaunchConfiguration(
+                    'front_path_half_width_m'
+                ),
+                'side_guard_forward_m': LaunchConfiguration(
+                    'side_guard_forward_m'
+                ),
+                'side_guard_rear_m': LaunchConfiguration('side_guard_rear_m'),
+                'side_percentile': LaunchConfiguration('side_percentile'),
                 'front_percentile': LaunchConfiguration('front_percentile'),
                 'front_close_min_rays': LaunchConfiguration('front_close_min_rays'),
                 'front_close_min_ratio': LaunchConfiguration(
@@ -107,6 +127,7 @@ def generate_launch_description():
             config,
             {
                 'obstacle_topic': LaunchConfiguration('obstacle_topic'),
+                'battery_topic': LaunchConfiguration('battery_topic'),
                 'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
                 'cmd_vel_stamped': LaunchConfiguration('cmd_vel_stamped'),
                 'max_speed': LaunchConfiguration('max_speed'),
@@ -122,9 +143,16 @@ def generate_launch_description():
                 ),
                 'dynamic_check_frames': LaunchConfiguration('dynamic_check_frames'),
                 'dynamic_clear_frames': LaunchConfiguration('dynamic_clear_frames'),
+                'side_balance_distance': LaunchConfiguration(
+                    'side_balance_distance'
+                ),
                 'side_protect_distance': LaunchConfiguration(
                     'side_protect_distance'
                 ),
+                'require_battery_ok': LaunchConfiguration('require_battery_ok'),
+                'min_battery_voltage': LaunchConfiguration('min_battery_voltage'),
+                'warn_battery_voltage': LaunchConfiguration('warn_battery_voltage'),
+                'battery_stale_sec': LaunchConfiguration('battery_stale_sec'),
                 'debug_decisions': LaunchConfiguration('debug_decisions'),
                 'debug_period_sec': LaunchConfiguration('debug_period_sec'),
             },

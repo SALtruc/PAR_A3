@@ -83,9 +83,13 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('front_center_angle_deg', 0.0)
         self.declare_parameter('front_angle_deg', 30.0)
         self.declare_parameter('front_percentile', 15.0)
+        self.declare_parameter('robot_half_width_m', 0.13)
+        self.declare_parameter('front_path_half_width_m', 0.18)
+        self.declare_parameter('side_guard_forward_m', 0.35)
+        self.declare_parameter('side_guard_rear_m', 0.20)
+        self.declare_parameter('side_percentile', 10.0)
         self.declare_parameter('front_close_min_rays', 3)
         self.declare_parameter('front_close_min_ratio', 0.01)
-        self.declare_parameter('side_angle_deg', 70.0)
         self.declare_parameter('rear_angle_deg', 35.0)
         self.declare_parameter('gap_angle_limit_deg', 110.0)
         self.declare_parameter('sensor_stale_sec', 1.0)
@@ -145,6 +149,26 @@ class ObstaclePerceptionNode(Node):
             0.0,
             min(100.0, float(self.get_parameter('front_percentile').value)),
         )
+        self._robot_half_width_m = max(
+            0.0,
+            float(self.get_parameter('robot_half_width_m').value),
+        )
+        self._front_path_half_width_m = max(
+            self._robot_half_width_m,
+            float(self.get_parameter('front_path_half_width_m').value),
+        )
+        self._side_guard_forward_m = max(
+            0.0,
+            float(self.get_parameter('side_guard_forward_m').value),
+        )
+        self._side_guard_rear_m = max(
+            0.0,
+            float(self.get_parameter('side_guard_rear_m').value),
+        )
+        self._side_percentile = max(
+            0.0,
+            min(100.0, float(self.get_parameter('side_percentile').value)),
+        )
         self._front_close_min_rays = max(
             1,
             int(self.get_parameter('front_close_min_rays').value),
@@ -152,9 +176,6 @@ class ObstaclePerceptionNode(Node):
         self._front_close_min_ratio = max(
             0.0,
             min(1.0, float(self.get_parameter('front_close_min_ratio').value)),
-        )
-        self._side_angle = math.radians(
-            float(self.get_parameter('side_angle_deg').value)
         )
         self._rear_angle = math.radians(
             float(self.get_parameter('rear_angle_deg').value)
@@ -325,7 +346,7 @@ class ObstaclePerceptionNode(Node):
         now = time.monotonic()
         self._last_tof_time = now
         self._last_tof_times[topic] = now
-        if math.isfinite(msg.range) and msg.min_range < msg.range < msg.max_range:
+        if math.isfinite(msg.range) and msg.min_range <= msg.range < msg.max_range:
             distance = msg.range
         else:
             distance = math.inf
@@ -625,6 +646,8 @@ class ObstaclePerceptionNode(Node):
                 'front_emergency_count': int(lidar_front_emergency_count),
                 'left_mean': _json_float(lidar_left),
                 'right_mean': _json_float(lidar_right),
+                'left_body_clearance': _json_float(lidar_left),
+                'right_body_clearance': _json_float(lidar_right),
                 'rear_mean': _json_float(lidar_rear),
                 'best_gap': self._gap_json(best_gap),
             },
@@ -795,13 +818,12 @@ class ObstaclePerceptionNode(Node):
             )
 
         front_vals: list[float] = []
-        left_vals: list[float] = []
-        right_vals: list[float] = []
+        front_path_vals: list[float] = []
+        left_clearance_vals: list[float] = []
+        right_clearance_vals: list[float] = []
         rear_vals: list[float] = []
         gap_points: list[tuple[float, float, bool]] = []
 
-        left_lo = math.radians(35.0)
-        right_hi = math.radians(-35.0)
         rear_lo = math.pi - self._rear_angle
         rear_hi = -math.pi + self._rear_angle
 
@@ -811,39 +833,70 @@ class ObstaclePerceptionNode(Node):
             distance = self._normalized_scan_distance(scan, value)
             valid = distance is not None
             if valid:
+                forward = distance * math.cos(rel_angle)
+                lateral = distance * math.sin(rel_angle)
                 if -self._front_angle <= rel_angle <= self._front_angle:
                     front_vals.append(distance)
-                if left_lo <= rel_angle <= self._side_angle:
-                    left_vals.append(distance)
-                if -self._side_angle <= rel_angle <= right_hi:
-                    right_vals.append(distance)
                 if rear_lo <= rel_angle <= math.pi or -math.pi <= rel_angle <= rear_hi:
                     rear_vals.append(distance)
+                if (
+                        forward >= 0.0
+                        and abs(lateral) <= self._front_path_half_width_m):
+                    front_path_vals.append(forward)
+                if (
+                        -self._side_guard_rear_m
+                        <= forward
+                        <= self._side_guard_forward_m):
+                    if lateral > self._robot_half_width_m:
+                        left_clearance_vals.append(
+                            max(0.0, lateral - self._robot_half_width_m)
+                        )
+                    elif lateral < -self._robot_half_width_m:
+                        right_clearance_vals.append(
+                            max(0.0, abs(lateral) - self._robot_half_width_m)
+                        )
             if -self._gap_angle_limit <= rel_angle <= self._gap_angle_limit:
                 gap_valid = valid and distance >= self._obstacle_distance
                 gap_points.append((rel_angle, distance if valid else math.inf, gap_valid))
             angle += scan.angle_increment
 
-        if not front_vals:
+        front_control_candidates = []
+        if front_vals:
+            front_control_candidates.append(
+                float(np.percentile(front_vals, self._front_percentile))
+            )
+        if front_path_vals:
+            front_control_candidates.append(
+                float(np.percentile(front_path_vals, self._front_percentile))
+            )
+        front_close_samples = front_vals + front_path_vals
+
+        if not front_vals and not front_path_vals:
             lidar_front = math.inf
             lidar_front_control = math.inf
             lidar_front_mean = math.inf
             front_close_count = 0
             front_emergency_count = 0
         else:
-            lidar_front = min(front_vals)
-            lidar_front_control = float(
-                np.percentile(front_vals, self._front_percentile)
-            )
-            lidar_front_mean = float(sum(front_vals) / len(front_vals))
+            lidar_front = min(front_close_samples)
+            lidar_front_control = min(front_control_candidates)
+            lidar_front_mean = float(sum(front_close_samples) / len(front_close_samples))
             front_close_count = sum(
-                1 for item in front_vals if item < self._obstacle_distance
+                1 for item in front_close_samples if item < self._obstacle_distance
             )
             front_emergency_count = sum(
-                1 for item in front_vals if item < self._emergency_distance
+                1 for item in front_close_samples if item < self._emergency_distance
             )
-        lidar_left = float(sum(left_vals) / len(left_vals)) if left_vals else math.inf
-        lidar_right = float(sum(right_vals) / len(right_vals)) if right_vals else math.inf
+        lidar_left = (
+            float(np.percentile(left_clearance_vals, self._side_percentile))
+            if left_clearance_vals
+            else math.inf
+        )
+        lidar_right = (
+            float(np.percentile(right_clearance_vals, self._side_percentile))
+            if right_clearance_vals
+            else math.inf
+        )
         lidar_rear = float(sum(rear_vals) / len(rear_vals)) if rear_vals else math.inf
         best_gap = self._find_best_gap(gap_points)
 

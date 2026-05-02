@@ -20,9 +20,13 @@ obstacle_perception:
     front_center_angle_deg: 0.0
     front_angle_deg: 40.0
     front_percentile: 15.0
+    robot_half_width_m: 0.13
+    front_path_half_width_m: 0.18
+    side_guard_forward_m: 0.35
+    side_guard_rear_m: 0.20
+    side_percentile: 10.0
     front_close_min_rays: 3
     front_close_min_ratio: 0.01
-    side_angle_deg: 70.0
     rear_angle_deg: 35.0
     gap_angle_limit_deg: 110.0
     sensor_stale_sec: 1.0
@@ -53,6 +57,7 @@ obstacle_perception:
 obstacle_avoidance:
   ros__parameters:
     obstacle_topic: /obstacle_representation
+    battery_topic: /battery
     cmd_vel_topic: /cmd_vel
     cmd_vel_stamped: true
     cmd_vel_frame_id: base_link
@@ -79,9 +84,13 @@ obstacle_avoidance:
     dynamic_clear_frames: 2
     obstacle_stale_sec: 1.0
     turn_out_sec: 0.90
-    side_balance_distance: 0.80
-    side_protect_distance: 0.30
+    side_balance_distance: 0.45
+    side_protect_distance: 0.12
     turn_direction_hold_sec: 2.5
+    require_battery_ok: true
+    min_battery_voltage: 11.1
+    warn_battery_voltage: 11.4
+    battery_stale_sec: 3.0
     debug_decisions: true
     debug_period_sec: 1.0
 
