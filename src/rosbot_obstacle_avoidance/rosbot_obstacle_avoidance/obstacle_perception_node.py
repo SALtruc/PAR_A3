@@ -63,6 +63,8 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('clear_distance', 0.75)
         self.declare_parameter('front_angle_deg', 30.0)
         self.declare_parameter('front_percentile', 15.0)
+        self.declare_parameter('front_close_min_rays', 3)
+        self.declare_parameter('front_close_min_ratio', 0.01)
         self.declare_parameter('side_angle_deg', 70.0)
         self.declare_parameter('rear_angle_deg', 35.0)
         self.declare_parameter('gap_angle_limit_deg', 110.0)
@@ -100,6 +102,14 @@ class ObstaclePerceptionNode(Node):
         self._front_percentile = max(
             0.0,
             min(100.0, float(self.get_parameter('front_percentile').value)),
+        )
+        self._front_close_min_rays = max(
+            1,
+            int(self.get_parameter('front_close_min_rays').value),
+        )
+        self._front_close_min_ratio = max(
+            0.0,
+            min(1.0, float(self.get_parameter('front_close_min_ratio').value)),
         )
         self._side_angle = math.radians(
             float(self.get_parameter('side_angle_deg').value)
@@ -257,6 +267,9 @@ class ObstaclePerceptionNode(Node):
         lidar_front = math.inf
         lidar_front_control = math.inf
         lidar_front_mean = math.inf
+        lidar_front_samples = 0
+        lidar_front_close_count = 0
+        lidar_front_emergency_count = 0
         lidar_left = math.inf
         lidar_right = math.inf
         lidar_rear = math.inf
@@ -266,6 +279,9 @@ class ObstaclePerceptionNode(Node):
                 lidar_front,
                 lidar_front_control,
                 lidar_front_mean,
+                lidar_front_samples,
+                lidar_front_close_count,
+                lidar_front_emergency_count,
                 lidar_left,
                 lidar_right,
                 lidar_rear,
@@ -282,9 +298,34 @@ class ObstaclePerceptionNode(Node):
         right_distance = _min_finite(lidar_right, depth_right)
         rear_distance = lidar_rear
 
-        blocked_lidar = lidar_front_control < self._obstacle_distance
+        front_close_ratio = (
+            lidar_front_close_count / lidar_front_samples
+            if lidar_front_samples > 0
+            else 0.0
+        )
+        front_emergency_ratio = (
+            lidar_front_emergency_count / lidar_front_samples
+            if lidar_front_samples > 0
+            else 0.0
+        )
+        front_close_cluster = (
+            lidar_front_close_count >= self._front_close_min_rays
+            and front_close_ratio >= self._front_close_min_ratio
+        )
+        front_emergency_cluster = (
+            lidar_front_emergency_count >= self._front_close_min_rays
+            and front_emergency_ratio >= self._front_close_min_ratio
+        )
+
+        blocked_lidar = (
+            lidar_front_control < self._obstacle_distance
+            or front_close_cluster
+        )
         blocked_depth = depth_front < self._depth_obstacle_distance
-        lidar_emergency = lidar_front_control < self._emergency_distance
+        lidar_emergency = (
+            lidar_front_control < self._emergency_distance
+            or front_emergency_cluster
+        )
         depth_emergency = depth_front < self._emergency_distance
         tof_emergency = tof_range < self._emergency_distance
         raw_blocked = blocked_lidar or blocked_depth
@@ -332,6 +373,10 @@ class ObstaclePerceptionNode(Node):
                 'front_min': _json_float(lidar_front),
                 'front_control': _json_float(lidar_front_control),
                 'front_mean': _json_float(lidar_front_mean),
+                'front_samples': int(lidar_front_samples),
+                'front_close_count': int(lidar_front_close_count),
+                'front_close_ratio': _json_float(front_close_ratio),
+                'front_emergency_count': int(lidar_front_emergency_count),
                 'left_mean': _json_float(lidar_left),
                 'right_mean': _json_float(lidar_right),
                 'rear_mean': _json_float(lidar_rear),
@@ -465,7 +510,18 @@ class ObstaclePerceptionNode(Node):
         """Single-pass scan processing: computes all sector stats and gap target."""
         scan = self._latest_scan
         if scan is None:
-            return math.inf, math.inf, math.inf, math.inf, math.inf, math.inf, None
+            return (
+                math.inf,
+                math.inf,
+                math.inf,
+                0,
+                0,
+                0,
+                math.inf,
+                math.inf,
+                math.inf,
+                None,
+            )
 
         front_vals: list[float] = []
         left_vals: list[float] = []
@@ -476,37 +532,44 @@ class ObstaclePerceptionNode(Node):
         left_lo = math.radians(35.0)
         right_hi = math.radians(-35.0)
         rear_lo = math.pi - self._rear_angle
+        rear_hi = -math.pi + self._rear_angle
 
         angle = scan.angle_min
         for value in scan.ranges:
-            valid = math.isfinite(value) and scan.range_min <= value <= scan.range_max
+            distance = self._normalized_scan_distance(scan, value)
+            valid = distance is not None
             if valid:
                 if -self._front_angle <= angle <= self._front_angle:
-                    front_vals.append(value)
+                    front_vals.append(distance)
                 if left_lo <= angle <= self._side_angle:
-                    left_vals.append(value)
+                    left_vals.append(distance)
                 if -self._side_angle <= angle <= right_hi:
-                    right_vals.append(value)
-                if rear_lo <= angle <= math.pi:
-                    rear_vals.append(value)
+                    right_vals.append(distance)
+                if rear_lo <= angle <= math.pi or -math.pi <= angle <= rear_hi:
+                    rear_vals.append(distance)
             if -self._gap_angle_limit <= angle <= self._gap_angle_limit:
-                gap_valid = valid and value >= self._obstacle_distance
-                gap_points.append((angle, value if valid else math.inf, gap_valid))
+                gap_valid = valid and distance >= self._obstacle_distance
+                gap_points.append((angle, distance if valid else math.inf, gap_valid))
             angle += scan.angle_increment
 
-        # If scan is live but front sector has zero valid rays the robot is
-        # almost certainly too close for the LIDAR's range_min to register.
-        # Treat it as an emergency-range obstacle rather than open space.
         if not front_vals:
-            lidar_front = self._emergency_distance * 0.5
-            lidar_front_control = self._emergency_distance * 0.5
-            lidar_front_mean = self._emergency_distance * 0.5
+            lidar_front = math.inf
+            lidar_front_control = math.inf
+            lidar_front_mean = math.inf
+            front_close_count = 0
+            front_emergency_count = 0
         else:
             lidar_front = min(front_vals)
             lidar_front_control = float(
                 np.percentile(front_vals, self._front_percentile)
             )
             lidar_front_mean = float(sum(front_vals) / len(front_vals))
+            front_close_count = sum(
+                1 for item in front_vals if item < self._obstacle_distance
+            )
+            front_emergency_count = sum(
+                1 for item in front_vals if item < self._emergency_distance
+            )
         lidar_left = float(sum(left_vals) / len(left_vals)) if left_vals else math.inf
         lidar_right = float(sum(right_vals) / len(right_vals)) if right_vals else math.inf
         lidar_rear = float(sum(rear_vals) / len(rear_vals)) if rear_vals else math.inf
@@ -516,11 +579,26 @@ class ObstaclePerceptionNode(Node):
             lidar_front,
             lidar_front_control,
             lidar_front_mean,
+            len(front_vals),
+            front_close_count,
+            front_emergency_count,
             lidar_left,
             lidar_right,
             lidar_rear,
             best_gap,
         )
+
+    @staticmethod
+    def _normalized_scan_distance(scan: LaserScan, value: float) -> float | None:
+        if math.isfinite(value):
+            if scan.range_min <= value <= scan.range_max:
+                return float(value)
+            return None
+        if math.isinf(value) and value > 0.0:
+            if math.isfinite(scan.range_max) and scan.range_max > 0.0:
+                return float(scan.range_max)
+            return 10.0
+        return None
 
     def _find_best_gap(self, points: list[tuple[float, float, bool]]) -> GapTarget | None:
         best: GapTarget | None = None

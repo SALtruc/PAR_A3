@@ -1,15 +1,13 @@
 """
 Project C reactive decision node.
 
-Consumes the fused obstacle representation from obstacle_perception_node and
-publishes /cmd_vel. The policy remains purely reactive: every control cycle is
-based on the current fused sensor snapshot, with only short timed recovery
-states for backing out of dead ends.
+The controller is intentionally conservative and deterministic:
+drive straight when the fused front sector is clear, rotate away from obstacles,
+and only reverse when the front is genuinely blocked and the rear is clear.
 """
 
 import json
 import math
-import random
 import time
 from dataclasses import dataclass
 
@@ -86,26 +84,23 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('max_speed', 0.10)
         self.declare_parameter('min_speed', 0.05)
         self.declare_parameter('reverse_speed', 0.08)
-        self.declare_parameter('max_angular_speed', 0.40)
-        self.declare_parameter('drive_max_angular_speed', 0.18)
-        self.declare_parameter('gap_kp', 0.85)
-        self.declare_parameter('corridor_kp', 0.18)
+        self.declare_parameter('max_angular_speed', 0.35)
+        self.declare_parameter('drive_max_angular_speed', 0.12)
+        self.declare_parameter('gap_kp', 0.65)
+        self.declare_parameter('corridor_kp', 0.14)
 
         self.declare_parameter('obstacle_distance', 0.55)
-        self.declare_parameter('clear_distance', 0.80)
+        self.declare_parameter('clear_distance', 0.85)
         self.declare_parameter('dynamic_stop_distance', 0.90)
-        self.declare_parameter('avoid_turn_only_distance', 0.45)
-        self.declare_parameter('avoid_forward_distance', 0.80)
-        self.declare_parameter('backup_clear_distance', 0.35)
+        self.declare_parameter('avoid_turn_only_distance', 0.65)
+        self.declare_parameter('avoid_forward_distance', 0.95)
+        self.declare_parameter('backup_clear_distance', 0.45)
         self.declare_parameter('dynamic_hold_sec', 0.80)
         self.declare_parameter('obstacle_stale_sec', 1.0)
-        self.declare_parameter('backup_sec', 0.45)
-        self.declare_parameter('turn_out_sec', 1.2)
-        self.declare_parameter('narrow_passage_distance', 0.65)
-        self.declare_parameter('wander_enabled', True)
-        self.declare_parameter('wander_interval_sec', 4.0)
-        self.declare_parameter('wander_angular_speed', 0.15)
-        self.declare_parameter('side_balance_distance', 0.95)
+        self.declare_parameter('backup_sec', 0.35)
+        self.declare_parameter('turn_out_sec', 0.90)
+        self.declare_parameter('side_balance_distance', 0.80)
+        self.declare_parameter('turn_direction_hold_sec', 0.80)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 1.0)
 
@@ -146,18 +141,11 @@ class ObstacleAvoidanceNode(Node):
         self._obstacle_stale_sec = float(self.get_parameter('obstacle_stale_sec').value)
         self._backup_sec = float(self.get_parameter('backup_sec').value)
         self._turn_out_sec = float(self.get_parameter('turn_out_sec').value)
-        self._narrow_passage_distance = float(
-            self.get_parameter('narrow_passage_distance').value
-        )
-        self._wander_enabled = _as_bool(self.get_parameter('wander_enabled').value)
-        self._wander_interval_sec = float(
-            self.get_parameter('wander_interval_sec').value
-        )
-        self._wander_angular_speed = float(
-            self.get_parameter('wander_angular_speed').value
-        )
         self._side_balance_distance = float(
             self.get_parameter('side_balance_distance').value
+        )
+        self._turn_direction_hold_sec = float(
+            self.get_parameter('turn_direction_hold_sec').value
         )
         self._debug_decisions = _as_bool(self.get_parameter('debug_decisions').value)
         self._debug_period_sec = float(self.get_parameter('debug_period_sec').value)
@@ -167,9 +155,8 @@ class ObstacleAvoidanceNode(Node):
         self._state = NO_OBSTACLES
         self._state_end_time = 0.0
         self._turn_direction = 1.0
+        self._turn_direction_until = 0.0
         self._dynamic_hold_until = 0.0
-        self._wander_next_time = 0.0
-        self._wander_bias = 0.0
         self._last_debug_time = 0.0
         self._debug_transition: str | None = None
 
@@ -247,81 +234,158 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        if self._state == EMERGENCY:
-            self._transition(AVOID if blocked else DRIVE)
-
-        if self._state == DYNAMIC_AVOID and now < self._dynamic_hold_until:
-            self._log_decision('dynamic_hold', twist, fused, target)
-            self._publish_velocity(twist)
-            return
-
-        if self._state == BACKUP:
-            if rear <= self._backup_clear_distance:
-                self._turn_direction = self._turn_direction_from(target, left, right)
-                self._transition(TURN_OUT, self._turn_out_sec)
-                self._log_decision('backup_rear_blocked_turn_out', twist, fused, target)
-                self._publish_velocity(twist)
-                return
-
-            if now >= self._state_end_time:
-                self._turn_direction = self._turn_direction_from(target, left, right)
-                self._transition(TURN_OUT, self._turn_out_sec)
-            else:
-                twist.linear.x = -self._reverse_speed
-                self._log_decision('backup_reverse', twist, fused, target)
-                self._publish_velocity(twist)
-                return
-
-        if self._state == TURN_OUT:
-            if now >= self._state_end_time:
-                self._transition(AVOID)
-            else:
-                twist.angular.z = self._turn_direction * self._max_angular_speed
-                self._log_decision('turn_out', twist, fused, target)
-                self._publish_velocity(twist)
-                return
-
-        if emergency:
-            self._turn_direction = self._turn_direction_from(target, left, right)
-            if rear > self._backup_clear_distance:
-                self._transition(BACKUP, self._backup_sec)
-                twist.linear.x = -self._reverse_speed
-                self._log_decision('lidar_emergency_backup', twist, fused, target)
-            else:
-                self._transition(TURN_OUT, self._turn_out_sec)
-                self._log_decision('lidar_emergency_turn_out', twist, fused, target)
-            self._publish_velocity(twist)
-            return
-
-        if dead_end:
-            self._turn_direction = self._turn_direction_from(target, left, right)
-            if rear > self._backup_clear_distance:
-                self._transition(BACKUP, self._backup_sec)
-            else:
-                self._transition(TURN_OUT, self._turn_out_sec)
-            self._log_decision('dead_end_recovery', twist, fused, target)
+        if self._run_timed_recovery(twist, now, front, left, right, rear, target):
+            self._log_decision(self._state.lower(), twist, fused, target)
             self._publish_velocity(twist)
             return
 
         if dynamic_obstacle and front < self._dynamic_stop_distance:
-            self._dynamic_hold_until = max(
-                self._dynamic_hold_until,
-                now + self._dynamic_hold_sec,
-            )
+            self._dynamic_hold_until = now + self._dynamic_hold_sec
             self._transition(DYNAMIC_AVOID, self._dynamic_hold_sec)
-            self._drive_dynamic_obstacle(twist, target)
-            self._log_decision('dynamic_obstacle_confirmed', twist, fused, target)
-        elif blocked or front < self._obstacle_distance:
-            self._transition(AVOID)
-            self._drive_toward_gap(twist, target, front, left, right)
-            self._log_decision('blocked_or_too_close', twist, fused, target)
-        else:
-            self._transition(DRIVE)
-            self._drive_clear_path(twist, target, left, right, front)
-            self._apply_wander(twist, left, right, front, now)
-            self._log_decision('clear_drive', twist, fused, target)
+            self._log_decision('dynamic_stop', twist, fused, target)
+            self._publish_velocity(twist)
+            return
 
+        if emergency:
+            self._start_recovery(front, left, right, rear, target)
+            self._log_decision('emergency_recovery', twist, fused, target)
+            self._publish_velocity(twist)
+            return
+
+        if dead_end:
+            self._start_recovery(front, left, right, rear, target)
+            self._log_decision('dead_end_recovery', twist, fused, target)
+            self._publish_velocity(twist)
+            return
+
+        if blocked or front < self._obstacle_distance:
+            self._transition(AVOID)
+            self._drive_avoid(twist, target, front, left, right, now)
+            self._log_decision('avoid_obstacle', twist, fused, target)
+            self._publish_velocity(twist)
+            return
+
+        self._transition(DRIVE)
+        self._drive_clear(twist, front, left, right)
+        self._log_decision('drive_clear', twist, fused, target)
         self._publish_velocity(twist)
+
+    def _run_timed_recovery(
+            self,
+            twist: Twist,
+            now: float,
+            front: float,
+            left: float,
+            right: float,
+            rear: float,
+            target: GapTarget | None) -> bool:
+        if self._state == DYNAMIC_AVOID and now < self._dynamic_hold_until:
+            return True
+
+        if self._state == BACKUP:
+            if rear <= self._backup_clear_distance:
+                self._set_turn_direction(target, left, right, now, force=True)
+                self._transition(TURN_OUT, self._turn_out_sec)
+                return True
+
+            if now < self._state_end_time:
+                twist.linear.x = -self._reverse_speed
+                return True
+
+            self._set_turn_direction(target, left, right, now, force=True)
+            self._transition(TURN_OUT, self._turn_out_sec)
+            return True
+
+        if self._state == TURN_OUT:
+            if now < self._state_end_time:
+                twist.angular.z = self._turn_direction * self._max_angular_speed
+                return True
+
+            if front < self._avoid_forward_distance:
+                self._transition(AVOID)
+                return False
+
+            self._transition(DRIVE)
+            return False
+
+        if self._state == EMERGENCY:
+            self._transition(AVOID if front < self._clear_distance else DRIVE)
+
+        return False
+
+    def _start_recovery(
+            self,
+            front: float,
+            left: float,
+            right: float,
+            rear: float,
+            target: GapTarget | None):
+        now = time.monotonic()
+        self._set_turn_direction(target, left, right, now, force=True)
+
+        if front < self._avoid_turn_only_distance and rear > self._backup_clear_distance:
+            self._transition(BACKUP, self._backup_sec)
+            return
+
+        self._transition(TURN_OUT, self._turn_out_sec)
+
+    def _drive_avoid(
+            self,
+            twist: Twist,
+            target: GapTarget | None,
+            front: float,
+            left: float,
+            right: float,
+            now: float):
+        direction = self._set_turn_direction(target, left, right, now)
+
+        if front >= self._avoid_forward_distance and target is not None:
+            twist.angular.z = _clamp(
+                self._gap_kp * target.angle,
+                -self._max_angular_speed,
+                self._max_angular_speed,
+            )
+            if abs(target.angle) < math.radians(25.0):
+                twist.linear.x = self._min_speed
+            return
+
+        twist.angular.z = direction * self._max_angular_speed
+
+    def _drive_clear(self, twist: Twist, front: float, left: float, right: float):
+        twist.linear.x = self._max_speed
+        twist.angular.z = 0.0
+
+        if front < self._clear_distance:
+            twist.linear.x = self._min_speed
+
+        if (
+                math.isfinite(left)
+                and math.isfinite(right)
+                and min(left, right) < self._side_balance_distance):
+            corridor_error = left - right
+            twist.angular.z = _clamp(
+                self._corridor_kp * corridor_error,
+                -self._drive_max_angular_speed,
+                self._drive_max_angular_speed,
+            )
+
+    def _set_turn_direction(
+            self,
+            target: GapTarget | None,
+            left: float,
+            right: float,
+            now: float,
+            force: bool = False) -> float:
+        if not force and now < self._turn_direction_until:
+            return self._turn_direction
+
+        if target is not None and math.isfinite(target.angle) and abs(target.angle) > 0.12:
+            self._turn_direction = 1.0 if target.angle > 0.0 else -1.0
+        else:
+            self._turn_direction = self._clearer_side(left, right)
+
+        self._turn_direction_until = now + self._turn_direction_hold_sec
+        return self._turn_direction
 
     @staticmethod
     def _target_from_fused(fused: dict) -> GapTarget | None:
@@ -341,113 +405,15 @@ class ObstacleAvoidanceNode(Node):
             for name in ('lidar', 'depth', 'tof')
         )
 
-    def _drive_dynamic_obstacle(self, twist: Twist, target: GapTarget | None):
-        # Dynamic objects are usually people. Stop first; the next cycle can
-        # re-enter AVOID/DRIVE after the hold window if the path is clear.
-        del target
-        twist.linear.x = 0.0
-        twist.angular.z = 0.0
-
-    def _drive_toward_gap(
-            self,
-            twist: Twist,
-            target: GapTarget | None,
-            front: float,
-            left: float,
-            right: float):
-        if target is None:
-            self._transition(BACKUP, self._backup_sec)
-            return
-
-        turn_angle = target.angle
-        if abs(turn_angle) < 0.12 and front < self._avoid_forward_distance:
-            turn_angle = self._clearer_side(left, right) * 0.55
-
-        twist.angular.z = _clamp(
-            self._gap_kp * turn_angle,
-            -self._max_angular_speed,
-            self._max_angular_speed,
-        )
-
-        # Never creep into a close obstacle. Rotate until the front sector is
-        # comfortably clear, then resume slow forward motion through the gap.
-        if front < self._avoid_turn_only_distance:
-            twist.linear.x = 0.0
-            return
-
-        if front >= self._avoid_forward_distance:
-            turn_scale = max(0.25, 1.0 - abs(target.angle) / math.radians(110.0))
-            twist.linear.x = self._min_speed * turn_scale
-
-    def _drive_clear_path(
-            self,
-            twist: Twist,
-            target: GapTarget | None,
-            left: float,
-            right: float,
-            front: float):
-        twist.linear.x = self._max_speed
-
-        # narrow passage: both sides close → creep and steer to centre
-        narrow = (
-            math.isfinite(left)
-            and math.isfinite(right)
-            and min(left, right) < self._narrow_passage_distance
-        )
-        if narrow:
-            twist.linear.x = self._min_speed
-            corridor_error = left - right
-            twist.angular.z = _clamp(
-                self._corridor_kp * corridor_error,
-                -self._drive_max_angular_speed,
-                self._drive_max_angular_speed,
-            )
-        elif (
-                math.isfinite(left)
-                and math.isfinite(right)
-                and min(left, right) < self._side_balance_distance):
-            corridor_error = left - right
-            twist.angular.z = _clamp(
-                self._corridor_kp * corridor_error,
-                -self._drive_max_angular_speed,
-                self._drive_max_angular_speed,
-            )
-        else:
-            twist.angular.z = 0.0
-
-        if front < self._clear_distance:
-            twist.linear.x = self._min_speed
-
-    def _apply_wander(
-            self,
-            twist: Twist,
-            left: float,
-            right: float,
-            front: float,
-            now: float):
-        if not self._wander_enabled:
-            return
-
-        open_space = (
-            front > self._clear_distance
-            and (not math.isfinite(left) or left > self._clear_distance)
-            and (not math.isfinite(right) or right > self._clear_distance)
-        )
-        if not open_space:
-            return
-
-        if now >= self._wander_next_time:
-            self._wander_bias = random.uniform(
-                -self._wander_angular_speed,
-                self._wander_angular_speed,
-            )
-            self._wander_next_time = now + self._wander_interval_sec
-
-        twist.angular.z = _clamp(
-            twist.angular.z + self._wander_bias,
-            -self._max_angular_speed,
-            self._max_angular_speed,
-        )
+    @staticmethod
+    def _clearer_side(left: float, right: float) -> float:
+        if not math.isfinite(left) and not math.isfinite(right):
+            return 1.0
+        if not math.isfinite(left):
+            return -1.0
+        if not math.isfinite(right):
+            return 1.0
+        return 1.0 if left >= right else -1.0
 
     def _log_decision(
             self,
@@ -505,6 +471,8 @@ class ObstacleAvoidanceNode(Node):
             f'lidar(front_min={_fmt_opt_m(lidar.get("front_min"))}, '
             f'front_control={_fmt_opt_m(lidar.get("front_control"))}, '
             f'front_mean={_fmt_opt_m(lidar.get("front_mean"))}, '
+            f'front_close={int(lidar.get("front_close_count", 0) or 0)}/'
+            f'{int(lidar.get("front_samples", 0) or 0)}, '
             f'left={_fmt_opt_m(lidar.get("left_mean"))}, '
             f'right={_fmt_opt_m(lidar.get("right_mean"))}) '
             f'depth(front={_fmt_opt_m(depth.get("front_min"))}, '
@@ -512,31 +480,12 @@ class ObstacleAvoidanceNode(Node):
             f'right={_fmt_opt_m(depth.get("right_min"))}) '
             f'tof(range={_fmt_opt_m(tof.get("range"))}) '
             f'gap(angle={gap_angle_deg}, width={gap_width}) '
+            f'turn_dir={self._turn_direction:+.0f} '
             f'cmd(x={twist.linear.x:.2f}, z={twist.angular.z:.2f}) '
             f'ages(scan={_fmt_age(ages.get("scan"))}, '
             f'depth={_fmt_age(ages.get("depth"))}, '
             f'tof={_fmt_age(ages.get("tof"))})'
         )
-
-    @staticmethod
-    def _clearer_side(left: float, right: float) -> float:
-        if not math.isfinite(left) and not math.isfinite(right):
-            return 1.0
-        if not math.isfinite(left):
-            return -1.0
-        if not math.isfinite(right):
-            return 1.0
-        return 1.0 if left >= right else -1.0
-
-    def _turn_direction_from(
-            self,
-            target: GapTarget | None,
-            left: float,
-            right: float) -> float:
-        """Prefer gap angle sign; fall back to clearer side."""
-        if target is not None and math.isfinite(target.angle) and abs(target.angle) > 0.1:
-            return 1.0 if target.angle > 0 else -1.0
-        return self._clearer_side(left, right)
 
     def _publish_velocity(self, twist: Twist):
         if not self._cmd_vel_stamped:
