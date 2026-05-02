@@ -28,6 +28,7 @@ from std_msgs.msg import String
 
 DRIVE = 'DRIVE'
 DODGE = 'DODGE'
+OBSERVE = 'OBSERVE'
 ROTATE = 'ROTATE'
 BACKUP = 'BACKUP'
 EMERGENCY = 'EMERGENCY'
@@ -114,6 +115,14 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('obstacle_distance', 0.15)   # react when front <= this
         self.declare_parameter('clear_distance', 0.20)      # path clear when front >= this
         self.declare_parameter('slow_distance', 0.18)       # slow down approaching this
+        # Drive-first policy thresholds
+        self.declare_parameter('observe_distance', 0.25)  # 15-25cm: observe several frames
+        self.declare_parameter('near_stop_distance', 0.15) # <=15cm: stop/backup/check
+        self.declare_parameter('observe_frames', 5)
+        self.declare_parameter('avoidance_distance', 0.50) # 25-50cm: dodge/steer, no full stop
+        self.declare_parameter('max_dodge_angle_deg', 45.0)
+        self.declare_parameter('rotation_step_deg', 45.0)
+        self.declare_parameter('side_drive_slow_distance', 0.08)
         self.declare_parameter('front_body_offset_m', 0.11)
         self.declare_parameter('face_wall_distance', 0.10)  # force backup when <= this
 
@@ -162,6 +171,13 @@ class ObstacleAvoidanceNode(Node):
         self._obstacle_distance = float(self.get_parameter('obstacle_distance').value)
         self._clear_distance = float(self.get_parameter('clear_distance').value)
         self._slow_distance = float(self.get_parameter('slow_distance').value)
+        self._observe_distance = float(self.get_parameter('observe_distance').value)
+        self._near_stop_distance = float(self.get_parameter('near_stop_distance').value)
+        self._observe_frames = max(1, int(self.get_parameter('observe_frames').value))
+        self._avoidance_distance = float(self.get_parameter('avoidance_distance').value)
+        self._max_dodge_angle = math.radians(float(self.get_parameter('max_dodge_angle_deg').value))
+        self._rotation_step_angle = math.radians(float(self.get_parameter('rotation_step_deg').value))
+        self._side_drive_slow_distance = float(self.get_parameter('side_drive_slow_distance').value)
         self._front_body_offset_m = max(
             0.0, float(self.get_parameter('front_body_offset_m').value)
         )
@@ -175,7 +191,7 @@ class ObstacleAvoidanceNode(Node):
             self.get_parameter('rotation_angular_speed').value
         )
         self._max_rotation_attempts = int(self.get_parameter('max_rotation_attempts').value)
-        self._rotation_90_sec = (math.pi / 2) / max(self._rotation_angular_speed, 0.01)
+        self._rotation_90_sec = self._rotation_step_angle / max(self._rotation_angular_speed, 0.01)
 
         self._backup_speed = float(self.get_parameter('backup_speed').value)
         self._backup_sec = float(self.get_parameter('backup_sec').value)
@@ -206,6 +222,9 @@ class ObstacleAvoidanceNode(Node):
         self._turn_direction = 1.0
         self._dodge_direction = 1.0
         self._rotation_attempts = 0
+        self._observe_count = 0
+        self._observe_first_front = math.inf
+        self._observe_min_front = math.inf
         self._battery_voltage: float | None = None
         self._last_battery_time: float | None = None
         self._last_battery_warn_time = 0.0
@@ -225,7 +244,7 @@ class ObstacleAvoidanceNode(Node):
             f'battery={battery_topic}, '
             f'stop_dist={self._obstacle_distance*100:.0f}cm '
             f'clear_dist={self._clear_distance*100:.0f}cm '
-            f'rotation_90_sec={self._rotation_90_sec:.1f}s '
+            f'rotation_step={math.degrees(self._rotation_step_angle):.0f}deg/{self._rotation_90_sec:.1f}s '
             f'debug_decisions={self._debug_decisions}'
         )
 
@@ -263,6 +282,7 @@ class ObstacleAvoidanceNode(Node):
             self._state_end_time = time.monotonic()
 
     def _control_loop(self):
+        """Priority policy: drive first; avoid only when the front path is not usable."""
         twist = Twist()
         now = time.monotonic()
 
@@ -294,168 +314,296 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # Continue active avoidance states
+        # Continue active states first.
         if self._state == BACKUP:
             if self._handle_backup(twist, snapshot, now):
                 self._log_decision('backup', snapshot)
                 self._publish_velocity(twist)
                 return
 
+        if self._state == OBSERVE:
+            if self._handle_observe(twist, snapshot, now):
+                self._log_decision('observe_frames', snapshot)
+                self._publish_velocity(twist)
+                return
+
         if self._state == DODGE:
             if self._handle_dodge(twist, snapshot, now):
-                self._log_decision('dodge', snapshot)
+                self._log_decision('dodge_limited_angle', snapshot)
                 self._publish_velocity(twist)
                 return
 
         if self._state == ROTATE:
             if self._handle_rotate(twist, snapshot, now):
-                self._log_decision('rotate', snapshot)
+                self._log_decision('rotate_search', snapshot)
                 self._publish_velocity(twist)
                 return
 
-        # Force backup when dangerously close (overrides new obstacle decisions)
-        if self._needs_backup(snapshot):
+        # 1) Too close is different from sudden appearance.
+        # <= 15cm after body-offset means stop/back up/check immediately.
+        if self._too_close(snapshot):
             self._start_backup(snapshot, now)
             self._handle_backup(twist, snapshot, now)
-            self._log_decision('face_wall_backup', snapshot)
+            self._log_decision('too_close_backup', snapshot)
             self._publish_velocity(twist)
             return
 
-        # Side too close: rotate away from the closest side.
-        # This avoids the old DODGE -> DRIVE loop when the front is clear but
-        # the robot is scraping a wall/object on the left or right.
-        if snapshot.side_escape is not None:
-            self._start_rotate(snapshot, now)
-            self._handle_rotate(twist, snapshot, now)
-            self._log_decision('side_danger_rotate', snapshot)
+        # 2) Dead-end: front + both sides blocked, cannot pass through.
+        if self._dead_end_now(snapshot):
+            self._start_backup(snapshot, now)
+            self._handle_backup(twist, snapshot, now)
+            self._log_decision('dead_end_backup', snapshot)
             self._publish_velocity(twist)
             return
 
-        # Obstacle at stop distance: try dodge first, fall back to rotate
-        if snapshot.front <= self._obstacle_distance:
-            has_side_room = (
-                snapshot.left > self._dodge_clearance
-                or snapshot.right > self._dodge_clearance
-            )
-            if has_side_room and not snapshot.dead_end:
+        # 3) Sudden/dynamic object in the 15-25cm band: observe 4-5 frames.
+        # If it disappears, keep driving. If it persists/closes, avoid.
+        if self._should_observe(snapshot):
+            self._start_observe(snapshot, now)
+            self._handle_observe(twist, snapshot, now)
+            self._log_decision('observe_start', snapshot)
+            self._publish_velocity(twist)
+            return
+
+        # 4) Medium obstacle in front: do not full stop. Try small dodge/steer,
+        # limited to about 45 degrees. Only rotate if there is no usable gap.
+        if self._front_needs_avoid(snapshot):
+            if self._can_dodge_forward(snapshot):
                 self._start_dodge(snapshot, now)
                 self._handle_dodge(twist, snapshot, now)
-                self._log_decision('dodge_start', snapshot)
+                self._log_decision('medium_front_dodge', snapshot)
             else:
                 self._start_rotate(snapshot, now)
                 self._handle_rotate(twist, snapshot, now)
-                self._log_decision('rotate_start', snapshot)
+                self._log_decision('front_blocked_rotate', snapshot)
             self._publish_velocity(twist)
             return
 
-        # Drive straight
+        # 5) Side close but front is usable: do NOT rotate in place. Keep moving
+        # slowly and steer away. This handles corridors/narrow passages.
+        if snapshot.side_escape is not None and self._front_is_usable(snapshot):
+            self._transition(DRIVE)
+            self._drive_straight(twist, snapshot, force_slow=True)
+            self._log_decision('side_close_drive_away', snapshot)
+            self._publish_velocity(twist)
+            return
+
+        # 6) Default: drive straight / roam. Front is clear enough for the robot.
         self._transition(DRIVE)
         self._drive_straight(twist, snapshot)
-        self._log_decision('drive_straight', snapshot)
+        self._log_decision('drive_first', snapshot)
         self._publish_velocity(twist)
 
-    # ── DODGE: move forward slowly while turning toward the clearer side ──────
+    # ── OBSERVE: short-frame confirmation for sudden/dynamic objects ────────
 
-    def _start_dodge(self, snapshot: Snapshot, now: float):
-        self._dodge_direction = self._clearer_side(snapshot.left, snapshot.right)
-        if snapshot.side_escape is not None:
-            self._dodge_direction = snapshot.side_escape
-        self._transition(DODGE, self._dodge_duration_sec)
+    def _start_observe(self, snapshot: Snapshot, now: float):
+        self._observe_count = 0
+        self._observe_first_front = snapshot.front
+        self._observe_min_front = snapshot.front
+        self._transition(OBSERVE)
 
-    def _handle_dodge(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
-        # Success: front is clear AND neither side is dangerously close.
-        # Without the side_escape condition, the robot can bounce between
-        # DODGE and DRIVE while still touching a wall/object on the side.
-        if self._heading_is_clear(snapshot):
+    def _handle_observe(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
+        self._observe_count += 1
+        self._observe_min_front = min(self._observe_min_front, snapshot.front)
+
+        # If the object vanished / front path became usable, continue driving.
+        if self._front_is_usable(snapshot):
             self._transition(DRIVE)
             return False
 
-        # Give up: hit wall or timed out
-        if snapshot.front <= self._face_wall_distance or now >= self._state_end_time:
+        # If it became too close during observation, back up immediately.
+        if self._too_close(snapshot):
+            self._start_backup(snapshot, now)
+            return True
+
+        # Collect 4-5 frames. Move very slowly instead of fully stopping.
+        if self._observe_count < self._observe_frames:
+            twist.linear.x = min(self._min_speed, 0.015)
+            twist.angular.z = self._soft_avoid_angular(snapshot)
+            return True
+
+        # Persistent obstacle after observation: dodge if possible, otherwise rotate.
+        if self._can_dodge_forward(snapshot):
+            self._start_dodge(snapshot, now)
+        else:
+            self._start_rotate(snapshot, now)
+        return True
+
+    # ── DODGE: forward motion + limited steering, not a full in-place turn ─────
+
+    def _start_dodge(self, snapshot: Snapshot, now: float):
+        self._dodge_direction = self._choose_dodge_direction(snapshot)
+        self._transition(DODGE, self._dodge_duration_sec)
+
+    def _handle_dodge(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
+        # Done: front path is now usable for the robot. Side can still be close;
+        # DRIVE will continue steering away while moving forward.
+        if self._front_is_usable(snapshot):
+            self._transition(DRIVE)
+            return False
+
+        # Too close or dodge timeout: rotate/backup search.
+        if self._too_close(snapshot):
+            self._start_backup(snapshot, now)
+            return True
+        if now >= self._state_end_time:
             self._start_rotate(snapshot, now)
             return True
 
-        # Side escape overrides dodge direction
-        direction = snapshot.side_escape if snapshot.side_escape is not None \
-            else self._dodge_direction
-
+        # Keep moving slowly and steer no more than about 45 degrees.
         twist.linear.x = self._dodge_forward_speed
-        twist.angular.z = direction * self._max_angular_speed
+        twist.angular.z = _clamp(
+            self._dodge_direction * self._max_angular_speed,
+            -self._max_angular_speed,
+            self._max_angular_speed,
+        )
         return True
 
-    # ── ROTATE: spin exactly 90 degrees, check, try other direction if needed ─
+    # ── ROTATE: only for truly blocked headings / dead ends ───────────────────
 
     def _start_rotate(self, snapshot: Snapshot, now: float):
-        """Start an escape rotation and lock the chosen direction.
-
-        Important: do NOT keep updating the turn direction during the rotation.
-        When the robot is very close to a wall/object, side readings can alternate
-        quickly as the robot turns. If the direction is recomputed every frame,
-        the robot can rotate left, then immediately rotate back right and return
-        to almost the same heading. Locking the direction makes the escape
-        behavior much more stable.
-        """
+        """Start an escape rotation and lock the chosen direction."""
         if self._state != ROTATE:
             self._rotation_attempts = 0
             self._turn_direction = self._choose_escape_direction(snapshot)
-
         self._transition(ROTATE, self._rotation_90_sec)
 
     def _handle_rotate(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
-        # Keep the locked direction until this rotate search finishes.
-        # Do not override self._turn_direction from side_escape here.
+        # If at any point the face/front path is usable, go forward immediately.
+        # Do NOT require side_escape == None; side-close is handled while driving.
+        if self._front_is_usable(snapshot):
+            self._rotation_attempts = 0
+            self._transition(DRIVE)
+            return False
+
         if now < self._state_end_time:
             twist.linear.x = 0.0
             twist.angular.z = self._turn_direction * self._rotation_angular_speed
             return True
 
-        # One rotation slice is finished. Only leave ROTATE if the heading is
-        # actually usable: enough front clearance and no side is scraping.
-        if self._heading_is_clear(snapshot):
-            self._transition(DRIVE)
-            return False
-
         self._rotation_attempts += 1
 
-        # Continue rotating in the SAME direction. This avoids the previous bug
-        # where the robot rotated one way, flipped direction, and returned close
-        # to the original heading.
+        # Continue the same direction for a few 45-degree sweeps.
         if self._rotation_attempts < self._max_rotation_attempts:
             self._state_end_time = now + self._rotation_90_sec
             self.get_logger().info(
                 f'Rotate sweep {self._rotation_attempts}/{self._max_rotation_attempts} '
                 f'continuing {"left" if self._turn_direction > 0 else "right"}; '
-                f'front={_fmt_cm(snapshot.front_raw)} '
-                f'spacing={_fmt_cm(snapshot.front)} '
-                f'left={_fmt_cm(snapshot.left)} right={_fmt_cm(snapshot.right)}'
+                f'front={_fmt_cm(snapshot.front_raw)} spacing={_fmt_cm(snapshot.front)} '
+                f'left={_fmt_cm(snapshot.left)} right={_fmt_cm(snapshot.right)} '
+                f'gap={self._gap_summary(snapshot)}'
             )
             twist.linear.x = 0.0
             twist.angular.z = self._turn_direction * self._rotation_angular_speed
             return True
 
-        # If a full rotate search did not find a safe heading, back up first.
-        # The next rotation search can choose a fresh direction from the new pose.
+        # Try opposite direction once from current pose before backing up.
+        if self._rotation_attempts < self._max_rotation_attempts * 2:
+            self._turn_direction = -self._turn_direction
+            self._state_end_time = now + self._rotation_90_sec
+            self.get_logger().info(
+                f'Rotate switching to {"left" if self._turn_direction > 0 else "right"}; '
+                f'front={_fmt_cm(snapshot.front_raw)} spacing={_fmt_cm(snapshot.front)}'
+            )
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_direction * self._rotation_angular_speed
+            return True
+
         self.get_logger().warn(
-            'Rotate search failed to find a safe heading — backing up and retrying'
+            'Rotate search failed to find usable front path — backing up and retrying'
         )
         self._start_backup(snapshot, now)
         twist.linear.x = 0.0
         twist.angular.z = 0.0
         return True
 
-    def _heading_is_clear(self, snapshot: Snapshot) -> bool:
-        return snapshot.front >= self._clear_distance and snapshot.side_escape is None
+    # ── Policy helper predicates ──────────────────────────────────────────────
 
-    def _choose_escape_direction(self, snapshot: Snapshot) -> float:
-        """Choose initial rotate direction once.
+    def _too_close(self, snapshot: Snapshot) -> bool:
+        return math.isfinite(snapshot.front) and snapshot.front <= self._near_stop_distance
 
-        Positive angular.z = left turn, negative angular.z = right turn.
-        If one side is dangerously close, turn away from that side. Otherwise,
-        turn toward the side with more measured clearance.
-        """
+    def _front_is_usable(self, snapshot: Snapshot) -> bool:
+        """True when the robot's current face/front path is wide and clear enough."""
+        if not math.isfinite(snapshot.front):
+            return True
+        if snapshot.front >= self._clear_distance:
+            return True
+        # If perception found a central gap close to heading, treat it as usable.
+        if snapshot.target is not None:
+            return (
+                abs(snapshot.target.angle) <= self._max_dodge_angle
+                and snapshot.target.clearance >= self._clear_distance
+            )
+        return False
+
+    def _front_needs_avoid(self, snapshot: Snapshot) -> bool:
+        return (
+            math.isfinite(snapshot.front)
+            and self._observe_distance < snapshot.front < self._avoidance_distance
+        )
+
+    def _should_observe(self, snapshot: Snapshot) -> bool:
+        if not math.isfinite(snapshot.front):
+            return False
+        return self._near_stop_distance < snapshot.front <= self._observe_distance
+
+    def _dead_end_now(self, snapshot: Snapshot) -> bool:
+        if snapshot.dead_end:
+            return True
+        return (
+            math.isfinite(snapshot.front)
+            and snapshot.front < self._observe_distance
+            and snapshot.left < self._dodge_clearance
+            and snapshot.right < self._dodge_clearance
+        )
+
+    def _can_dodge_forward(self, snapshot: Snapshot) -> bool:
+        if self._too_close(snapshot):
+            return False
+        # Need at least one side with enough clearance to slide around.
+        side_room = max(snapshot.left, snapshot.right)
+        if not math.isfinite(side_room):
+            side_room = self._dodge_clearance
+        if side_room < self._dodge_clearance:
+            return False
+        if snapshot.target is None:
+            return True
+        return abs(snapshot.target.angle) <= self._max_dodge_angle
+
+    def _choose_dodge_direction(self, snapshot: Snapshot) -> float:
+        # Prefer the gap angle if it is within +-45 degrees.
+        if snapshot.target is not None and abs(snapshot.target.angle) <= self._max_dodge_angle:
+            if abs(snapshot.target.angle) < math.radians(5):
+                return self._clearer_side(snapshot.left, snapshot.right)
+            return 1.0 if snapshot.target.angle > 0 else -1.0
         if snapshot.side_escape is not None:
             return snapshot.side_escape
         return self._clearer_side(snapshot.left, snapshot.right)
+
+    def _choose_escape_direction(self, snapshot: Snapshot) -> float:
+        # Rotate toward the best gap if available, otherwise toward larger space.
+        if snapshot.target is not None and math.isfinite(snapshot.target.angle):
+            if abs(snapshot.target.angle) > math.radians(5):
+                return 1.0 if snapshot.target.angle > 0 else -1.0
+        if snapshot.side_escape is not None and not self._front_is_usable(snapshot):
+            return snapshot.side_escape
+        return self._clearer_side(snapshot.left, snapshot.right)
+
+    def _soft_avoid_angular(self, snapshot: Snapshot) -> float:
+        direction = self._choose_dodge_direction(snapshot)
+        return _clamp(
+            direction * self._drive_max_angular_speed,
+            -self._drive_max_angular_speed,
+            self._drive_max_angular_speed,
+        )
+
+    def _gap_summary(self, snapshot: Snapshot) -> str:
+        if snapshot.target is None:
+            return 'none'
+        return (
+            f'{math.degrees(snapshot.target.angle):.0f}deg/'
+            f'{_fmt_cm(snapshot.target.clearance)}/w{snapshot.target.width}'
+        )
 
     # ── BACKUP ────────────────────────────────────────────────────────────────
 
@@ -488,13 +636,24 @@ class ObstacleAvoidanceNode(Node):
 
     # ── DRIVE straight with corridor centering ────────────────────────────────
 
-    def _drive_straight(self, twist: Twist, snapshot: Snapshot):
+    def _drive_straight(self, twist: Twist, snapshot: Snapshot, force_slow: bool = False):
         twist.linear.x = self._max_speed
         twist.angular.z = 0.0
 
-        if snapshot.front < self._slow_distance:
+        if force_slow or snapshot.front < self._slow_distance:
             twist.linear.x = self._min_speed
 
+        # If only one side is dangerously close, keep driving but steer away.
+        if snapshot.side_escape is not None:
+            twist.linear.x = min(twist.linear.x, self._min_speed)
+            twist.angular.z = _clamp(
+                snapshot.side_escape * self._drive_max_angular_speed,
+                -self._drive_max_angular_speed,
+                self._drive_max_angular_speed,
+            )
+            return
+
+        # Corridor centering: turn slightly toward the side with more room.
         if (
                 math.isfinite(snapshot.left)
                 and math.isfinite(snapshot.right)
