@@ -15,6 +15,7 @@ obstacle_perception:
     obstacle_distance: 0.70
     clear_distance: 0.90
     front_angle_deg: 30.0
+    front_percentile: 15.0
     side_angle_deg: 70.0
     rear_angle_deg: 35.0
     gap_angle_limit_deg: 110.0
@@ -37,26 +38,28 @@ obstacle_avoidance:
     state_topic: /obstacle_avoidance_state
     control_hz: 20.0
 
-    max_speed: 0.12
+    max_speed: 0.10
     min_speed: 0.05
     reverse_speed: 0.08
-    max_angular_speed: 0.50
-    gap_kp: 1.25
-    corridor_kp: 0.45
+    max_angular_speed: 0.40
+    drive_max_angular_speed: 0.18
+    gap_kp: 0.85
+    corridor_kp: 0.18
 
-    obstacle_distance: 0.70
-    clear_distance: 0.90
+    obstacle_distance: 0.55
+    clear_distance: 0.80
     dynamic_stop_distance: 0.90
-    avoid_turn_only_distance: 0.65
-    avoid_forward_distance: 0.90
+    avoid_turn_only_distance: 0.45
+    avoid_forward_distance: 0.80
     backup_clear_distance: 0.35
     dynamic_hold_sec: 0.80
     obstacle_stale_sec: 1.0
-    backup_sec: 0.9
-    turn_out_sec: 1.8
-    wander_enabled: true
+    backup_sec: 0.45
+    turn_out_sec: 1.2
+    wander_enabled: false
     wander_interval_sec: 4.0
-    wander_angular_speed: 0.18
+    wander_angular_speed: 0.08
+    side_balance_distance: 0.95
     debug_decisions: true
     debug_period_sec: 1.0
 

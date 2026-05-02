@@ -62,6 +62,7 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('obstacle_distance', 0.55)
         self.declare_parameter('clear_distance', 0.75)
         self.declare_parameter('front_angle_deg', 30.0)
+        self.declare_parameter('front_percentile', 15.0)
         self.declare_parameter('side_angle_deg', 70.0)
         self.declare_parameter('rear_angle_deg', 35.0)
         self.declare_parameter('gap_angle_limit_deg', 110.0)
@@ -92,6 +93,10 @@ class ObstaclePerceptionNode(Node):
         self._clear_distance = float(self.get_parameter('clear_distance').value)
         self._front_angle = math.radians(
             float(self.get_parameter('front_angle_deg').value)
+        )
+        self._front_percentile = max(
+            0.0,
+            min(100.0, float(self.get_parameter('front_percentile').value)),
         )
         self._side_angle = math.radians(
             float(self.get_parameter('side_angle_deg').value)
@@ -234,6 +239,7 @@ class ObstaclePerceptionNode(Node):
         tof_recent = self._use_tof and self._sensor_recent(self._last_tof_time)
 
         lidar_front = math.inf
+        lidar_front_control = math.inf
         lidar_front_mean = math.inf
         lidar_left = math.inf
         lidar_right = math.inf
@@ -241,6 +247,11 @@ class ObstaclePerceptionNode(Node):
         best_gap: GapTarget | None = None
         if scan_recent:
             lidar_front = self._sector_min(-self._front_angle, self._front_angle)
+            lidar_front_control = self._sector_percentile(
+                -self._front_angle,
+                self._front_angle,
+                self._front_percentile,
+            )
             lidar_front_mean = self._sector_mean(-self._front_angle, self._front_angle)
             lidar_left = self._sector_mean(math.radians(35.0), self._side_angle)
             lidar_right = self._sector_mean(-self._side_angle, math.radians(-35.0))
@@ -255,16 +266,17 @@ class ObstaclePerceptionNode(Node):
         depth_right = self._depth_right if depth_recent else math.inf
         tof_range = self._tof_range if tof_recent else math.inf
 
-        front_distance = _min_finite(lidar_front, depth_front)
+        front_distance = _min_finite(lidar_front_control, depth_front)
         left_distance = _min_finite(lidar_left, depth_left)
         right_distance = _min_finite(lidar_right, depth_right)
         rear_distance = lidar_rear
 
-        blocked_lidar = lidar_front < self._obstacle_distance
+        blocked_lidar = lidar_front_control < self._obstacle_distance
         blocked_depth = depth_front < self._depth_obstacle_distance
         blocked = blocked_lidar or blocked_depth
         emergency = (
-            front_distance < self._emergency_distance
+            lidar_front < self._emergency_distance
+            or depth_front < self._emergency_distance
             or tof_range < self._emergency_distance
         )
         dead_end = blocked and (
@@ -294,6 +306,7 @@ class ObstaclePerceptionNode(Node):
             'lidar': {
                 'available': bool(scan_recent),
                 'front_min': _json_float(lidar_front),
+                'front_control': _json_float(lidar_front_control),
                 'front_mean': _json_float(lidar_front_mean),
                 'left_mean': _json_float(lidar_left),
                 'right_mean': _json_float(lidar_right),
@@ -433,6 +446,16 @@ class ObstaclePerceptionNode(Node):
     def _sector_mean(self, angle_lo: float, angle_hi: float) -> float:
         values = self._sector_values(angle_lo, angle_hi)
         return float(sum(values) / len(values)) if values else math.inf
+
+    def _sector_percentile(
+            self,
+            angle_lo: float,
+            angle_hi: float,
+            percentile: float) -> float:
+        values = self._sector_values(angle_lo, angle_hi)
+        if not values:
+            return math.inf
+        return float(np.percentile(values, percentile))
 
     def _sector_values(self, angle_lo: float, angle_hi: float) -> list[float]:
         scan = self._latest_scan

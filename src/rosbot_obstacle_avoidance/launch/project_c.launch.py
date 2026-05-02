@@ -23,15 +23,17 @@ def generate_launch_description():
         DeclareLaunchArgument('cmd_vel_stamped', default_value='true'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
-        DeclareLaunchArgument('max_speed', default_value='0.12'),
+        DeclareLaunchArgument('max_speed', default_value='0.10'),
         DeclareLaunchArgument('emergency_distance', default_value='0.25'),
-        DeclareLaunchArgument('obstacle_distance', default_value='0.70'),
-        DeclareLaunchArgument('clear_distance', default_value='0.90'),
+        DeclareLaunchArgument('obstacle_distance', default_value='0.55'),
+        DeclareLaunchArgument('clear_distance', default_value='0.80'),
         DeclareLaunchArgument('depth_obstacle_distance', default_value='0.80'),
         DeclareLaunchArgument('dynamic_closing_speed', default_value='0.80'),
-        DeclareLaunchArgument('avoid_turn_only_distance', default_value='0.65'),
-        DeclareLaunchArgument('avoid_forward_distance', default_value='0.90'),
+        DeclareLaunchArgument('avoid_turn_only_distance', default_value='0.45'),
+        DeclareLaunchArgument('avoid_forward_distance', default_value='0.80'),
         DeclareLaunchArgument('dynamic_hold_sec', default_value='0.80'),
+        DeclareLaunchArgument('front_percentile', default_value='15.0'),
+        DeclareLaunchArgument('wander_enabled', default_value='false'),
         DeclareLaunchArgument('debug_decisions', default_value='true'),
         DeclareLaunchArgument('debug_period_sec', default_value='1.0'),
     ]
@@ -53,6 +55,7 @@ def generate_launch_description():
                 'emergency_distance': LaunchConfiguration('emergency_distance'),
                 'obstacle_distance': LaunchConfiguration('obstacle_distance'),
                 'clear_distance': LaunchConfiguration('clear_distance'),
+                'front_percentile': LaunchConfiguration('front_percentile'),
                 'depth_obstacle_distance': LaunchConfiguration(
                     'depth_obstacle_distance'
                 ),
@@ -84,6 +87,7 @@ def generate_launch_description():
                     'avoid_forward_distance'
                 ),
                 'dynamic_hold_sec': LaunchConfiguration('dynamic_hold_sec'),
+                'wander_enabled': LaunchConfiguration('wander_enabled'),
                 'debug_decisions': LaunchConfiguration('debug_decisions'),
                 'debug_period_sec': LaunchConfiguration('debug_period_sec'),
             },

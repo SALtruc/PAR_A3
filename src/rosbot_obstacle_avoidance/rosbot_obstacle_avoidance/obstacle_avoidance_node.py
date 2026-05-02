@@ -83,26 +83,28 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('state_topic', '/obstacle_avoidance_state')
         self.declare_parameter('control_hz', 20.0)
 
-        self.declare_parameter('max_speed', 0.12)
+        self.declare_parameter('max_speed', 0.10)
         self.declare_parameter('min_speed', 0.05)
         self.declare_parameter('reverse_speed', 0.08)
-        self.declare_parameter('max_angular_speed', 0.50)
-        self.declare_parameter('gap_kp', 1.25)
-        self.declare_parameter('corridor_kp', 0.45)
+        self.declare_parameter('max_angular_speed', 0.40)
+        self.declare_parameter('drive_max_angular_speed', 0.18)
+        self.declare_parameter('gap_kp', 0.85)
+        self.declare_parameter('corridor_kp', 0.18)
 
-        self.declare_parameter('obstacle_distance', 0.70)
-        self.declare_parameter('clear_distance', 0.90)
+        self.declare_parameter('obstacle_distance', 0.55)
+        self.declare_parameter('clear_distance', 0.80)
         self.declare_parameter('dynamic_stop_distance', 0.90)
-        self.declare_parameter('avoid_turn_only_distance', 0.65)
-        self.declare_parameter('avoid_forward_distance', 0.90)
+        self.declare_parameter('avoid_turn_only_distance', 0.45)
+        self.declare_parameter('avoid_forward_distance', 0.80)
         self.declare_parameter('backup_clear_distance', 0.35)
         self.declare_parameter('dynamic_hold_sec', 0.80)
         self.declare_parameter('obstacle_stale_sec', 1.0)
-        self.declare_parameter('backup_sec', 0.9)
-        self.declare_parameter('turn_out_sec', 1.8)
-        self.declare_parameter('wander_enabled', True)
+        self.declare_parameter('backup_sec', 0.45)
+        self.declare_parameter('turn_out_sec', 1.2)
+        self.declare_parameter('wander_enabled', False)
         self.declare_parameter('wander_interval_sec', 4.0)
-        self.declare_parameter('wander_angular_speed', 0.18)
+        self.declare_parameter('wander_angular_speed', 0.08)
+        self.declare_parameter('side_balance_distance', 0.95)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 1.0)
 
@@ -118,6 +120,9 @@ class ObstacleAvoidanceNode(Node):
         self._reverse_speed = float(self.get_parameter('reverse_speed').value)
         self._max_angular_speed = float(
             self.get_parameter('max_angular_speed').value
+        )
+        self._drive_max_angular_speed = float(
+            self.get_parameter('drive_max_angular_speed').value
         )
         self._gap_kp = float(self.get_parameter('gap_kp').value)
         self._corridor_kp = float(self.get_parameter('corridor_kp').value)
@@ -146,6 +151,9 @@ class ObstacleAvoidanceNode(Node):
         )
         self._wander_angular_speed = float(
             self.get_parameter('wander_angular_speed').value
+        )
+        self._side_balance_distance = float(
+            self.get_parameter('side_balance_distance').value
         )
         self._debug_decisions = _as_bool(self.get_parameter('debug_decisions').value)
         self._debug_period_sec = float(self.get_parameter('debug_period_sec').value)
@@ -194,8 +202,12 @@ class ObstacleAvoidanceNode(Node):
             msg.data = f'{time.time():.3f},{new_state}'
             self._state_pub.publish(msg)
             self._debug_transition = f'{previous}->{new_state}'
-        self._state = new_state
-        self._state_end_time = time.monotonic() + duration
+            self._state = new_state
+            self._state_end_time = time.monotonic() + duration
+            return
+
+        if duration <= 0.0:
+            self._state_end_time = time.monotonic()
 
     def _control_loop(self):
         twist = Twist()
@@ -225,14 +237,9 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        if emergency:
-            if 'tof' not in source and rear > self._backup_clear_distance:
-                self._transition(BACKUP, self._backup_sec)
-                twist.linear.x = -self._reverse_speed
-                self._log_decision('lidar_emergency_backup', twist, fused, target)
-            else:
-                self._transition(EMERGENCY)
-                self._log_decision('emergency_stop', twist, fused, target)
+        if emergency and 'tof' in source:
+            self._transition(EMERGENCY)
+            self._log_decision('tof_emergency_stop', twist, fused, target)
             self._publish_velocity(twist)
             return
 
@@ -245,6 +252,13 @@ class ObstacleAvoidanceNode(Node):
             return
 
         if self._state == BACKUP:
+            if rear <= self._backup_clear_distance:
+                self._turn_direction = self._clearer_side(left, right)
+                self._transition(TURN_OUT, self._turn_out_sec)
+                self._log_decision('backup_rear_blocked_turn_out', twist, fused, target)
+                self._publish_velocity(twist)
+                return
+
             if now >= self._state_end_time:
                 self._turn_direction = self._clearer_side(left, right)
                 self._transition(TURN_OUT, self._turn_out_sec)
@@ -262,6 +276,18 @@ class ObstacleAvoidanceNode(Node):
                 self._log_decision('turn_out', twist, fused, target)
                 self._publish_velocity(twist)
                 return
+
+        if emergency:
+            self._turn_direction = self._clearer_side(left, right)
+            if rear > self._backup_clear_distance:
+                self._transition(BACKUP, self._backup_sec)
+                twist.linear.x = -self._reverse_speed
+                self._log_decision('lidar_emergency_backup', twist, fused, target)
+            else:
+                self._transition(TURN_OUT, self._turn_out_sec)
+                self._log_decision('lidar_emergency_turn_out', twist, fused, target)
+            self._publish_velocity(twist)
+            return
 
         if dead_end:
             self._turn_direction = self._clearer_side(left, right)
@@ -281,7 +307,7 @@ class ObstacleAvoidanceNode(Node):
             self._transition(DYNAMIC_AVOID, self._dynamic_hold_sec)
             self._drive_dynamic_obstacle(twist, target)
             self._log_decision('dynamic_obstacle_confirmed', twist, fused, target)
-        elif blocked or front < self._clear_distance:
+        elif blocked or front < self._obstacle_distance:
             self._transition(AVOID)
             self._drive_toward_gap(twist, target, front, left, right)
             self._log_decision('blocked_or_too_close', twist, fused, target)
@@ -357,22 +383,21 @@ class ObstacleAvoidanceNode(Node):
             right: float,
             front: float):
         twist.linear.x = self._max_speed
-        if math.isfinite(left) and math.isfinite(right):
+        if (
+                math.isfinite(left)
+                and math.isfinite(right)
+                and min(left, right) < self._side_balance_distance):
             corridor_error = left - right
             twist.angular.z = _clamp(
                 self._corridor_kp * corridor_error,
-                -self._max_angular_speed,
-                self._max_angular_speed,
+                -self._drive_max_angular_speed,
+                self._drive_max_angular_speed,
             )
-        elif target is not None:
-            twist.angular.z = _clamp(
-                0.45 * self._gap_kp * target.angle,
-                -self._max_angular_speed,
-                self._max_angular_speed,
-            )
+        else:
+            twist.angular.z = 0.0
 
         if front < self._clear_distance:
-            twist.linear.x = 0.0
+            twist.linear.x = self._min_speed
 
     def _apply_wander(
             self,
@@ -457,6 +482,7 @@ class ObstacleAvoidanceNode(Node):
             f'fused(front={_fmt_m(front)}, left={_fmt_m(left)}, '
             f'right={_fmt_m(right)}, rear={_fmt_m(rear)}) '
             f'lidar(front_min={_fmt_opt_m(lidar.get("front_min"))}, '
+            f'front_control={_fmt_opt_m(lidar.get("front_control"))}, '
             f'front_mean={_fmt_opt_m(lidar.get("front_mean"))}, '
             f'left={_fmt_opt_m(lidar.get("left_mean"))}, '
             f'right={_fmt_opt_m(lidar.get("right_mean"))}) '
