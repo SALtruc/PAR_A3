@@ -43,11 +43,24 @@ ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   cmd_vel_topic:=/cmd_vel
 ```
 
-The safety launch routes the custom controller through `/cmd_vel_raw` first.
-Collision Monitor then checks front stop/slow zones using `/scan_filtered` and
-`/oak/points`, and publishes the final command to `/cmd_vel`. The safety zones
-are velocity-dependent, so a wall in front blocks forward motion but still lets
-the controller back away during a face-wall recovery.
+By default this launches the Project C custom safety policy directly to
+`/cmd_vel`, avoiding a dead command path if optional Nav2 packages are missing
+or ABI-incompatible.
+
+Optional Nav2 Collision Monitor layer:
+
+```bash
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
+  scan_topic:=/scan_filtered \
+  pointcloud_topic:=/oak/points \
+  cmd_vel_topic:=/cmd_vel \
+  use_nav2_collision_monitor:=true
+```
+
+With `use_nav2_collision_monitor:=true`, the custom controller publishes to
+`/cmd_vel_raw`. Collision Monitor checks velocity-dependent stop/slow zones
+using `/scan_filtered` and `/oak/points`, then publishes the final command to
+`/cmd_vel`.
 
 Useful topics:
 

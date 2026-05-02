@@ -13,6 +13,9 @@ dist/
 # Generated QR images (re-generate with tools/generate_qr_codes.py)
 qr_codes/
 
+# Downloaded upstream simulation/reference repos
+external/
+
 # Logs
 *.csv
 ~/rosbot_qr_logs/
