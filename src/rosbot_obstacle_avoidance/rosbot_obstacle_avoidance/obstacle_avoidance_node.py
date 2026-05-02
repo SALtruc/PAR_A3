@@ -118,6 +118,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('observe_distance', 0.30)  # 15-30cm raw front: observe several frames
         self.declare_parameter('near_stop_distance', 0.15) # <=15cm: stop/backup/check
         self.declare_parameter('observe_frames', 5)
+        self.declare_parameter('dynamic_observe_distance', 1.20)
         self.declare_parameter('avoidance_distance', 0.50) # 25-50cm: dodge/steer, no full stop
         self.declare_parameter('max_dodge_angle_deg', 45.0)
         self.declare_parameter('rotation_step_deg', 45.0)
@@ -240,7 +241,7 @@ class ObstacleAvoidanceNode(Node):
         self.create_timer(1.0 / max(control_hz, 1.0), self._control_loop)
 
         self.get_logger().info(
-            f'Obstacle decision ready. obstacles={obstacle_topic}, '
+            f'Obstacle decision ready [SAFE_STRAIGHT]. obstacles={obstacle_topic}, '
             f'cmd_vel={cmd_vel_topic} ({vel_type.__name__}), '
             f'battery={battery_topic}, '
             f'stop_dist={self._obstacle_distance*100:.0f}cm '
@@ -392,12 +393,14 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # 6) Side close but front is usable: do NOT rotate in place. Keep moving
-        # slowly and steer away. This handles corridors/narrow passages.
+        # 6) Side close but front is usable: NEVER steer sideways in normal drive.
+        # The previous versions drifted and hit the wall because side readings/gap
+        # changed angular.z while the front path was still open. Here we only slow
+        # down and keep angular.z = 0.
         if snapshot.side_escape is not None and self._front_is_usable(snapshot):
             self._transition(DRIVE)
             self._drive_straight(twist, snapshot, force_slow=True)
-            self._log_decision('side_close_drive_away', snapshot)
+            self._log_decision('side_close_slow_straight', snapshot)
             self._publish_velocity(twist)
             return
 
@@ -430,15 +433,19 @@ class ObstacleAvoidanceNode(Node):
             self._transition(DRIVE)
             return False
 
-        # Collect several frames. Keep almost stopped, with tiny steering toward free side.
+        # Collect several frames. Stop and check; do NOT start latching sideways yet.
         if self._observe_count < self._observe_frames:
             twist.linear.x = 0.0
-            twist.angular.z = self._soft_avoid_angular(snapshot)
+            twist.angular.z = 0.0
             return True
 
-        # Persistent object after observation: dodge if one side is available;
-        # otherwise rotate search. This is where dynamic obstacles become action.
-        if self._can_dodge_forward(snapshot):
+        # Persistent object after observation:
+        # - very close/static obstacle => back up first;
+        # - dynamic object farther away => do a small dodge/slow avoid;
+        # - no side room => rotate search.
+        if self._front_decision_distance(snapshot) <= self._observe_distance:
+            self._start_backup(snapshot, now)
+        elif self._can_dodge_forward(snapshot):
             self._start_dodge(snapshot, now)
         else:
             self._start_rotate(snapshot, now)
@@ -532,36 +539,31 @@ class ObstacleAvoidanceNode(Node):
     # ── Policy helper predicates ──────────────────────────────────────────────
 
     def _front_decision_distance(self, snapshot: Snapshot) -> float:
-        """Distance used by the decision policy for the robot's current face/front.
+        """Conservative front distance for safety.
 
-        Key fix: when OAK depth says the front corridor is clear but LIDAR reports
-        a very near hit, treat the LIDAR hit as a likely side-edge/reflection false
-        positive. This was the main cause of the robot refusing to drive straight
-        on an actually clear path.
+        Final demo rule:
+        - The robot normally drives straight.
+        - If ANY front-facing sensor reports an object within the observe band
+          (<= observe_distance), do NOT ignore it just because the other sensor
+          says clear. This fixes the case where a foot/person appears in front
+          but OAK depth sees the background and the robot keeps driving.
+        - For medium/far front readings, use the safer minimum when both sensors
+          are available.
         """
-        lidar_d = snapshot.lidar_front
-        depth_d = snapshot.depth_front
-
-        # Depth-confirmed clear front overrides suspicious close LIDAR hits.
-        # If there is a real wall directly in front, OAK depth should also be close.
-        if (
-            snapshot.depth_available
-            and math.isfinite(depth_d)
-            and depth_d >= self._clear_distance
-            and (not math.isfinite(lidar_d) or lidar_d < self._observe_distance)
-        ):
-            return depth_d
-
-        # If both sensors are available, use the safer minimum only when depth is
-        # not clearly telling us the front is open.
-        if snapshot.depth_available and math.isfinite(depth_d):
-            if math.isfinite(snapshot.front_raw):
-                return min(snapshot.front_raw, depth_d)
-            return depth_d
-
+        candidates = []
         if math.isfinite(snapshot.front_raw):
-            return snapshot.front_raw
-        return snapshot.front
+            candidates.append(snapshot.front_raw)
+        if math.isfinite(snapshot.lidar_front):
+            candidates.append(snapshot.lidar_front)
+        if snapshot.depth_available and math.isfinite(snapshot.depth_front):
+            candidates.append(snapshot.depth_front)
+        if not candidates:
+            return math.inf
+
+        close_candidates = [d for d in candidates if d <= self._observe_distance]
+        if close_candidates:
+            return min(close_candidates)
+        return min(candidates)
 
     def _too_close(self, snapshot: Snapshot) -> bool:
         front_decision = self._front_decision_distance(snapshot)
@@ -595,7 +597,15 @@ class ObstacleAvoidanceNode(Node):
         front_decision = self._front_decision_distance(snapshot)
         if not math.isfinite(front_decision):
             return False
-        return self._near_stop_distance < front_decision <= self._observe_distance
+        # Static/sudden close object: observe in the 15-30cm band.
+        if self._near_stop_distance < front_decision <= self._observe_distance:
+            return True
+        # OAK depth-motion event: observe even if the object is farther away
+        # (for example a moving leg at 0.6-1.0m). This prevents the robot from
+        # silently driving while a person is moving in front of the camera.
+        if snapshot.dynamic_candidate and front_decision <= self._dynamic_observe_distance:
+            return True
+        return False
 
     def _dead_end_now(self, snapshot: Snapshot) -> bool:
         # Do not trust the fused dead_end flag alone when the raw front is open;
@@ -621,13 +631,8 @@ class ObstacleAvoidanceNode(Node):
         return abs(snapshot.target.angle) <= self._max_dodge_angle
 
     def _choose_dodge_direction(self, snapshot: Snapshot) -> float:
-        # Prefer the gap angle if it is within +-45 degrees.
-        if snapshot.target is not None and abs(snapshot.target.angle) <= self._max_dodge_angle:
-            if abs(snapshot.target.angle) < math.radians(5):
-                return self._clearer_side(snapshot.left, snapshot.right)
-            return 1.0 if snapshot.target.angle > 0 else -1.0
-        if snapshot.side_escape is not None:
-            return snapshot.side_escape
+        # During normal drive we never use best_gap. For dodge, choose the side
+        # with more physical room. This is more stable than chasing gap angles.
         return self._clearer_side(snapshot.left, snapshot.right)
 
     def _choose_escape_direction(self, snapshot: Snapshot) -> float:

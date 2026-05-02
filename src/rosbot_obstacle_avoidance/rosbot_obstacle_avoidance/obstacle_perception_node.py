@@ -123,6 +123,20 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('obstacle_hold_sec', 0.35)
         self.declare_parameter('clear_confirm_sec', 0.20)
 
+        # OAK stereo-depth dynamic fallback. The first depth ROI above can miss
+        # a foot because it looks around the image centre. This lower-centre ROI
+        # compares consecutive depth frames so a moving leg/person in front of
+        # the robot becomes a dynamic obstacle even when the centre depth value
+        # still sees the background.
+        self.declare_parameter('depth_motion_enabled', True)
+        self.declare_parameter('depth_motion_y_center', 0.68)
+        self.declare_parameter('depth_motion_width_fraction', 0.45)
+        self.declare_parameter('depth_motion_height_fraction', 0.38)
+        self.declare_parameter('depth_motion_delta_m', 0.10)
+        self.declare_parameter('depth_motion_near_m', 1.20)
+        self.declare_parameter('depth_motion_min_ratio', 0.015)
+        self.declare_parameter('depth_motion_confirm_frames', 2)
+
         scan_topic = self.get_parameter('scan_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         pointcloud_topic = self.get_parameter('pointcloud_topic').value
@@ -261,6 +275,30 @@ class ObstaclePerceptionNode(Node):
         self._clear_confirm_sec = float(
             self.get_parameter('clear_confirm_sec').value
         )
+        self._depth_motion_enabled = _as_bool(
+            self.get_parameter('depth_motion_enabled').value
+        )
+        self._depth_motion_y_center = float(
+            self.get_parameter('depth_motion_y_center').value
+        )
+        self._depth_motion_width_fraction = float(
+            self.get_parameter('depth_motion_width_fraction').value
+        )
+        self._depth_motion_height_fraction = float(
+            self.get_parameter('depth_motion_height_fraction').value
+        )
+        self._depth_motion_delta_m = float(
+            self.get_parameter('depth_motion_delta_m').value
+        )
+        self._depth_motion_near_m = float(
+            self.get_parameter('depth_motion_near_m').value
+        )
+        self._depth_motion_min_ratio = float(
+            self.get_parameter('depth_motion_min_ratio').value
+        )
+        self._depth_motion_confirm_frames = max(
+            1, int(self.get_parameter('depth_motion_confirm_frames').value)
+        )
 
         self._latest_scan: LaserScan | None = None
         self._last_scan_time: float | None = None
@@ -268,6 +306,11 @@ class ObstaclePerceptionNode(Node):
         self._depth_left = math.inf
         self._depth_right = math.inf
         self._last_depth_time: float | None = None
+        self._prev_depth_motion_roi = None
+        self._depth_motion = False
+        self._depth_motion_score = 0.0
+        self._depth_motion_front = math.inf
+        self._depth_motion_count = 0
         self._pointcloud_front = math.inf
         self._pointcloud_left = math.inf
         self._pointcloud_right = math.inf
@@ -394,6 +437,7 @@ class ObstaclePerceptionNode(Node):
             x_center=0.75,
             width_fraction=self._depth_side_fraction,
         )
+        self._update_depth_motion(depth_img, msg.encoding)
 
     def _on_pointcloud(self, msg: PointCloud2):
         now = time.monotonic()
@@ -490,6 +534,93 @@ class ObstaclePerceptionNode(Node):
             return math.inf
         return float(np.percentile(values, self._pointcloud_percentile))
 
+    def _depth_roi_values_m(
+            self,
+            depth_img,
+            encoding: str,
+            x_center: float,
+            y_center: float,
+            width_fraction: float,
+            height_fraction: float):
+        """Return valid depth ROI values in metres."""
+        h, w = depth_img.shape[:2]
+        roi_w = max(1, int(w * width_fraction))
+        roi_h = max(1, int(h * height_fraction))
+        cx = int(w * max(0.0, min(1.0, x_center)))
+        cy = int(h * max(0.0, min(1.0, y_center)))
+        x0 = max(0, cx - roi_w // 2)
+        x1 = min(w, cx + roi_w // 2)
+        y0 = max(0, cy - roi_h // 2)
+        y1 = min(h, cy + roi_h // 2)
+        roi = depth_img[y0:y1, x0:x1]
+        arr = roi.astype('float32', copy=False)
+        encoding_l = encoding.lower()
+        if not (
+                '32f' in encoding_l
+                or '64f' in encoding_l
+                or np.issubdtype(roi.dtype, np.floating)):
+            arr = arr / 1000.0
+        valid = arr[np.isfinite(arr) & (arr > 0.02)]
+        return arr, valid
+
+    def _update_depth_motion(self, depth_img, encoding: str):
+        if not self._depth_motion_enabled:
+            self._depth_motion = False
+            self._depth_motion_score = 0.0
+            self._depth_motion_front = math.inf
+            self._prev_depth_motion_roi = None
+            self._depth_motion_count = 0
+            return
+
+        roi, valid = self._depth_roi_values_m(
+            depth_img,
+            encoding,
+            x_center=0.50,
+            y_center=self._depth_motion_y_center,
+            width_fraction=self._depth_motion_width_fraction,
+            height_fraction=self._depth_motion_height_fraction,
+        )
+        if valid.size == 0:
+            self._depth_motion = False
+            self._depth_motion_score = 0.0
+            self._depth_motion_front = math.inf
+            self._prev_depth_motion_roi = None
+            self._depth_motion_count = 0
+            return
+
+        near_front = float(np.percentile(valid, 10))
+        self._depth_motion_front = near_front
+
+        if self._prev_depth_motion_roi is None or self._prev_depth_motion_roi.shape != roi.shape:
+            self._prev_depth_motion_roi = roi.copy()
+            self._depth_motion = False
+            self._depth_motion_score = 0.0
+            self._depth_motion_count = 0
+            return
+
+        prev = self._prev_depth_motion_roi
+        valid_pair = (
+            np.isfinite(roi)
+            & np.isfinite(prev)
+            & (roi > 0.02)
+            & (prev > 0.02)
+        )
+        near_pair = valid_pair & ((roi < self._depth_motion_near_m) | (prev < self._depth_motion_near_m))
+        changed = near_pair & (np.abs(roi - prev) >= self._depth_motion_delta_m)
+        denom = max(int(near_pair.sum()), 1)
+        motion_ratio = float(changed.sum()) / denom
+        self._depth_motion_score = motion_ratio
+        raw_motion = (
+            near_front <= self._depth_motion_near_m
+            and motion_ratio >= self._depth_motion_min_ratio
+        )
+        if raw_motion:
+            self._depth_motion_count += 1
+        else:
+            self._depth_motion_count = 0
+        self._depth_motion = self._depth_motion_count >= self._depth_motion_confirm_frames
+        self._prev_depth_motion_roi = roi.copy()
+
     def _depth_roi_distance(
             self,
             depth_img,
@@ -568,6 +699,9 @@ class ObstaclePerceptionNode(Node):
         pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
         pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
         depth_front = _min_finite(depth_image_front, pointcloud_front)
+        depth_motion_active = bool(depth_image_recent and self._depth_motion)
+        if depth_motion_active:
+            depth_front = _min_finite(depth_front, self._depth_motion_front)
         depth_left = _min_finite(depth_image_left, pointcloud_left)
         depth_right = _min_finite(depth_image_right, pointcloud_right)
 
@@ -628,12 +762,13 @@ class ObstaclePerceptionNode(Node):
             )
         )
         dynamic_obstacle, closing_speed = self._dynamic_obstacle(front_distance, now)
+        dynamic_obstacle = bool(dynamic_obstacle or depth_motion_active)
 
         sources = []
         if blocked_lidar or lidar_emergency or (
                 blocked and not raw_blocked_sources and 'lidar' in self._blocked_sources):
             sources.append('lidar')
-        if blocked_depth or depth_emergency or (
+        if blocked_depth or depth_emergency or depth_motion_active or (
                 blocked and not raw_blocked_sources and 'depth' in self._blocked_sources):
             sources.append('depth')
         if tof_emergency:
@@ -678,6 +813,9 @@ class ObstaclePerceptionNode(Node):
                 'pointcloud_front_min': _json_float(pointcloud_front),
                 'pointcloud_left_min': _json_float(pointcloud_left),
                 'pointcloud_right_min': _json_float(pointcloud_right),
+                'motion': bool(depth_motion_active),
+                'motion_score': _json_float(self._depth_motion_score),
+                'motion_front_min': _json_float(self._depth_motion_front),
             },
             'tof': {
                 'available': bool(tof_recent),
@@ -699,6 +837,7 @@ class ObstaclePerceptionNode(Node):
                 'emergency': bool(emergency),
                 'dead_end': bool(dead_end),
                 'dynamic_obstacle': bool(dynamic_obstacle),
+                'depth_motion': bool(depth_motion_active),
                 'closing_speed_mps': _json_float(closing_speed),
                 'source': sources,
                 'best_gap_angle': _json_float(best_gap.angle if best_gap else math.inf),
