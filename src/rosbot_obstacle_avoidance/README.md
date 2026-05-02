@@ -91,4 +91,5 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `corridor_kp` | `0.14` | Narrow-passage centering strength |
 | `backup_sec` | `0.35` | Reverse duration for dead-end recovery |
 | `turn_out_sec` | `0.90` | Turn duration after backing out |
+| `side_protect_distance` | `0.45` | Stops forward motion and turns away from a close side wall |
 | `turn_direction_hold_sec` | `0.80` | Prevents left/right avoid direction from flipping every scan |

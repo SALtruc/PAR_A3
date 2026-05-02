@@ -62,6 +62,7 @@ obstacle_avoidance:
     backup_sec: 0.35
     turn_out_sec: 0.90
     side_balance_distance: 0.80
+    side_protect_distance: 0.45
     turn_direction_hold_sec: 0.80
     debug_decisions: true
     debug_period_sec: 1.0

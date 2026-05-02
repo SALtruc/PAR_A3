@@ -100,6 +100,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('backup_sec', 0.35)
         self.declare_parameter('turn_out_sec', 0.90)
         self.declare_parameter('side_balance_distance', 0.80)
+        self.declare_parameter('side_protect_distance', 0.45)
         self.declare_parameter('turn_direction_hold_sec', 0.80)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 1.0)
@@ -143,6 +144,9 @@ class ObstacleAvoidanceNode(Node):
         self._turn_out_sec = float(self.get_parameter('turn_out_sec').value)
         self._side_balance_distance = float(
             self.get_parameter('side_balance_distance').value
+        )
+        self._side_protect_distance = float(
+            self.get_parameter('side_protect_distance').value
         )
         self._turn_direction_hold_sec = float(
             self.get_parameter('turn_direction_hold_sec').value
@@ -338,6 +342,10 @@ class ObstacleAvoidanceNode(Node):
             right: float,
             now: float):
         direction = self._set_turn_direction(target, left, right, now)
+        side_escape = self._side_escape_direction(left, right)
+        if side_escape is not None:
+            twist.angular.z = side_escape * self._max_angular_speed
+            return
 
         if front >= self._avoid_forward_distance and target is not None:
             twist.angular.z = _clamp(
@@ -354,6 +362,12 @@ class ObstacleAvoidanceNode(Node):
     def _drive_clear(self, twist: Twist, front: float, left: float, right: float):
         twist.linear.x = self._max_speed
         twist.angular.z = 0.0
+
+        side_escape = self._side_escape_direction(left, right)
+        if side_escape is not None:
+            twist.linear.x = 0.0
+            twist.angular.z = side_escape * self._drive_max_angular_speed
+            return
 
         if front < self._clear_distance:
             twist.linear.x = self._min_speed
@@ -379,7 +393,10 @@ class ObstacleAvoidanceNode(Node):
         if not force and now < self._turn_direction_until:
             return self._turn_direction
 
-        if target is not None and math.isfinite(target.angle) and abs(target.angle) > 0.12:
+        side_escape = self._side_escape_direction(left, right)
+        if side_escape is not None:
+            self._turn_direction = side_escape
+        elif target is not None and math.isfinite(target.angle) and abs(target.angle) > 0.12:
             self._turn_direction = 1.0 if target.angle > 0.0 else -1.0
         else:
             self._turn_direction = self._clearer_side(left, right)
@@ -414,6 +431,15 @@ class ObstacleAvoidanceNode(Node):
         if not math.isfinite(right):
             return 1.0
         return 1.0 if left >= right else -1.0
+
+    def _side_escape_direction(self, left: float, right: float) -> float | None:
+        left_close = math.isfinite(left) and left < self._side_protect_distance
+        right_close = math.isfinite(right) and right < self._side_protect_distance
+        if left_close and (not right_close or left <= right):
+            return -1.0
+        if right_close:
+            return 1.0
+        return None
 
     def _log_decision(
             self,

@@ -16,6 +16,7 @@ import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image, LaserScan, Range
 from std_msgs.msg import String
 
@@ -170,11 +171,26 @@ class ObstaclePerceptionNode(Node):
         self._bridge = CvBridge()
 
         if self._use_lidar:
-            self.create_subscription(LaserScan, scan_topic, self._on_scan, 10)
+            self.create_subscription(
+                LaserScan,
+                scan_topic,
+                self._on_scan,
+                qos_profile_sensor_data,
+            )
         if self._use_depth:
-            self.create_subscription(Image, depth_topic, self._on_depth, 10)
+            self.create_subscription(
+                Image,
+                depth_topic,
+                self._on_depth,
+                qos_profile_sensor_data,
+            )
         if self._use_tof:
-            self.create_subscription(Range, tof_topic, self._on_tof, 10)
+            self.create_subscription(
+                Range,
+                tof_topic,
+                self._on_tof,
+                qos_profile_sensor_data,
+            )
 
         self._pub = self.create_publisher(String, obstacle_topic, 10)
         self.create_timer(1.0 / max(publish_hz, 1.0), self._publish_representation)
