@@ -2,12 +2,14 @@
 Project C reactive decision node.
 
 Policy:
-- drive straight at full speed until front obstacle is within stop_distance (15 cm);
-- try to squeeze past by moving forward + turning toward the clearer side (DODGE);
-- if squeeze fails or both sides are blocked, rotate exactly 90 degrees in place (ROTATE);
-- after each 90-degree rotation check if the path is now clear (> clear_distance);
-- if still blocked, flip direction and try another 90 degrees — up to max_rotation_attempts;
-- when all rotation attempts are exhausted, back up and restart rotation search.
+- drive forward when the fused obstacle representation is fresh and safe;
+- slow down in narrow passages and steer toward the larger side clearance;
+- if the front is blocked, rotate toward the clearer side and re-check the front;
+- if a side is dangerously close, rotate away from that side with a locked direction;
+- during one rotation search, keep the same rotation direction to avoid left-right oscillation;
+- after each rotation step, drive only when the front is clear and both sides are safe;
+- if no clear heading is found after max_rotation_attempts, back up and restart;
+- hard-stop on ToF emergency.
 
 No map, no route, no long-term memory.
 """
@@ -319,7 +321,9 @@ class ObstacleAvoidanceNode(Node):
             self._publish_velocity(twist)
             return
 
-        # Side too close — dodge away even when front is clear
+        # Side too close: rotate away from the closest side.
+        # This avoids the old DODGE -> DRIVE loop when the front is clear but
+        # the robot is scraping a wall/object on the left or right.
         if snapshot.side_escape is not None:
             self._start_rotate(snapshot, now)
             self._handle_rotate(twist, snapshot, now)
@@ -359,8 +363,10 @@ class ObstacleAvoidanceNode(Node):
         self._transition(DODGE, self._dodge_duration_sec)
 
     def _handle_dodge(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
-        # Success: front is clear
-        if snapshot.front >= self._clear_distance and snapshot.side_escape is None:
+        # Success: front is clear AND neither side is dangerously close.
+        # Without the side_escape condition, the robot can bounce between
+        # DODGE and DRIVE while still touching a wall/object on the side.
+        if self._heading_is_clear(snapshot):
             self._transition(DRIVE)
             return False
 
@@ -380,46 +386,76 @@ class ObstacleAvoidanceNode(Node):
     # ── ROTATE: spin exactly 90 degrees, check, try other direction if needed ─
 
     def _start_rotate(self, snapshot: Snapshot, now: float):
-        self._turn_direction = self._clearer_side(snapshot.left, snapshot.right)
-        if snapshot.side_escape is not None:
-            self._turn_direction = snapshot.side_escape
-        # Don't reset attempts here — they accumulate across DRIVE/ROTATE cycles
-        # so the robot tries more directions before backing up
+        """Start an escape rotation and lock the chosen direction.
+
+        Important: do NOT keep updating the turn direction during the rotation.
+        When the robot is very close to a wall/object, side readings can alternate
+        quickly as the robot turns. If the direction is recomputed every frame,
+        the robot can rotate left, then immediately rotate back right and return
+        to almost the same heading. Locking the direction makes the escape
+        behavior much more stable.
+        """
+        if self._state != ROTATE:
+            self._rotation_attempts = 0
+            self._turn_direction = self._choose_escape_direction(snapshot)
+
         self._transition(ROTATE, self._rotation_90_sec)
 
     def _handle_rotate(self, twist: Twist, snapshot: Snapshot, now: float) -> bool:
-        # Side escape can override turn direction during rotation
-        if snapshot.side_escape is not None:
-            self._turn_direction = snapshot.side_escape
-
-        # Still rotating this 90-degree slice
+        # Keep the locked direction until this rotate search finishes.
+        # Do not override self._turn_direction from side_escape here.
         if now < self._state_end_time:
             twist.linear.x = 0.0
             twist.angular.z = self._turn_direction * self._rotation_angular_speed
             return True
 
-        # 90 degrees done — check if the path ahead is clear
-        if snapshot.front >= self._clear_distance:
+        # One rotation slice is finished. Only leave ROTATE if the heading is
+        # actually usable: enough front clearance and no side is scraping.
+        if self._heading_is_clear(snapshot):
             self._transition(DRIVE)
             return False
 
-        # Still blocked: try the opposite 90 degrees if attempts remain
         self._rotation_attempts += 1
+
+        # Continue rotating in the SAME direction. This avoids the previous bug
+        # where the robot rotated one way, flipped direction, and returned close
+        # to the original heading.
         if self._rotation_attempts < self._max_rotation_attempts:
-            self._turn_direction = -self._turn_direction
             self._state_end_time = now + self._rotation_90_sec
             self.get_logger().info(
-                f'Rotate attempt {self._rotation_attempts}/{self._max_rotation_attempts}'
-                f' — flipping to {"left" if self._turn_direction > 0 else "right"}'
+                f'Rotate sweep {self._rotation_attempts}/{self._max_rotation_attempts} '
+                f'continuing {"left" if self._turn_direction > 0 else "right"}; '
+                f'front={_fmt_cm(snapshot.front_raw)} '
+                f'spacing={_fmt_cm(snapshot.front)} '
+                f'left={_fmt_cm(snapshot.left)} right={_fmt_cm(snapshot.right)}'
             )
             twist.linear.x = 0.0
             twist.angular.z = self._turn_direction * self._rotation_angular_speed
             return True
 
-        # All rotation attempts exhausted — back up and try again
-        self.get_logger().warn('All rotation attempts failed — backing up')
+        # If a full rotate search did not find a safe heading, back up first.
+        # The next rotation search can choose a fresh direction from the new pose.
+        self.get_logger().warn(
+            'Rotate search failed to find a safe heading — backing up and retrying'
+        )
         self._start_backup(snapshot, now)
+        twist.linear.x = 0.0
+        twist.angular.z = 0.0
         return True
+
+    def _heading_is_clear(self, snapshot: Snapshot) -> bool:
+        return snapshot.front >= self._clear_distance and snapshot.side_escape is None
+
+    def _choose_escape_direction(self, snapshot: Snapshot) -> float:
+        """Choose initial rotate direction once.
+
+        Positive angular.z = left turn, negative angular.z = right turn.
+        If one side is dangerously close, turn away from that side. Otherwise,
+        turn toward the side with more measured clearance.
+        """
+        if snapshot.side_escape is not None:
+            return snapshot.side_escape
+        return self._clearer_side(snapshot.left, snapshot.right)
 
     # ── BACKUP ────────────────────────────────────────────────────────────────
 
@@ -581,6 +617,50 @@ class ObstacleAvoidanceNode(Node):
             return 1.0
         return None
 
+    def _sensor_status_summary(self, snapshot: Snapshot) -> str:
+        """Human-readable sensor availability for debug logs."""
+        data = self._latest_obstacles or {}
+        depth = data.get('depth', {})
+        tof = data.get('tof', {})
+        ages = data.get('ages', {})
+
+        lidar_age = ages.get('scan')
+        depth_age = ages.get('depth')
+        tof_age = ages.get('tof')
+
+        def age_text(value) -> str:
+            try:
+                value_f = float(value)
+            except (TypeError, ValueError):
+                return 'none'
+            return f'{value_f:.2f}s' if math.isfinite(value_f) else 'none'
+
+        return (
+            f'lidar={"on" if snapshot.lidar_available else "off"}'
+            f'(age={age_text(lidar_age)}) '
+            f'depth={"on" if snapshot.depth_available else "off"}'
+            f'(image={bool(depth.get("image_available", False))},'
+            f'pc={bool(depth.get("pointcloud_available", False))},'
+            f'age={age_text(depth_age)}) '
+            f'tof={"on" if snapshot.tof_available else "off"}'
+            f'(range={_fmt_cm(_finite_or_inf(tof.get("range")))},'
+            f'age={age_text(tof_age)})'
+        )
+
+    def _detection_source_summary(self, snapshot: Snapshot) -> str:
+        """Shows which sensor currently contributes to obstacle detection."""
+        source = '+'.join(snapshot.source) if snapshot.source else 'none'
+        lidar = 'hit' if snapshot.lidar_obstacle else 'clear'
+        depth = 'hit' if snapshot.depth_obstacle else 'clear'
+        tof = 'emergency' if snapshot.tof_emergency else 'clear'
+        obs_type = 'dynamic' if snapshot.dynamic_candidate else 'static'
+        return (
+            f'source={source} '
+            f'lidar={lidar}(front={_fmt_cm(snapshot.lidar_front)}) '
+            f'depth={depth}(front={_fmt_cm(snapshot.depth_front)}) '
+            f'tof={tof} type={obs_type}'
+        )
+
     # ── Logging ───────────────────────────────────────────────────────────────
 
     def _log_decision(self, reason: str, snapshot: Snapshot | None = None):
@@ -612,22 +692,37 @@ class ObstacleAvoidanceNode(Node):
         left_cm = _fmt_cm(snapshot.left)
         right_cm = _fmt_cm(snapshot.right)
 
+        sensor_status = self._sensor_status_summary(snapshot)
+        detection_source = self._detection_source_summary(snapshot)
+        target = (
+            f'gap(angle={math.degrees(snapshot.target.angle):.0f}deg,'
+            f'clear={_fmt_cm(snapshot.target.clearance)},'
+            f'width={snapshot.target.width})'
+            if snapshot.target is not None
+            else 'gap=none'
+        )
+        turn = 'left' if self._turn_direction > 0 else 'right'
+        dodge = 'left' if self._dodge_direction > 0 else 'right'
+
         if self._state in (DRIVE, NO_OBSTACLES):
             self.get_logger().info(
                 f'[NAV] state={self._state} nearest={nearest_cm} '
-                f'front={front_cm} left={left_cm} right={right_cm} reason={reason}'
+                f'front={front_cm} left={left_cm} right={right_cm} '
+                f'reason={reason} {detection_source} {sensor_status} {target}'
             )
             return
 
-        obs_type = 'dynamic' if snapshot.dynamic_candidate else 'static'
         dead_end = 'YES' if snapshot.dead_end else 'no'
         spacing_cm = _fmt_cm(snapshot.front)
 
         self.get_logger().warn(
-            f'[OBSTACLE] state={self._state} type={obs_type} '
-            f'nearest={nearest_cm} front={front_cm} spacing={spacing_cm} '
+            f'[OBSTACLE] state={self._state} nearest={nearest_cm} '
+            f'front={front_cm} spacing={spacing_cm} '
             f'left={left_cm} right={right_cm} '
-            f'dead_end={dead_end} reason={reason}'
+            f'dead_end={dead_end} reason={reason} '
+            f'turn={turn} dodge={dodge} attempts={self._rotation_attempts}/'
+            f'{self._max_rotation_attempts} {detection_source} '
+            f'{sensor_status} {target}'
         )
 
     def _publish_velocity(self, twist: Twist):
