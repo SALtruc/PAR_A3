@@ -486,13 +486,17 @@ class ObstacleAvoidanceNode(Node):
         # Thin/low objects can disappear for one LIDAR frame; require a stable
         # release distance before driving straight again.
         if not self._front_suspicious(snap, front):
-            front_released = (not math.isfinite(front)) or front >= self._front_release
-            if front_released:
+            soft_clear = (not math.isfinite(front)) or front >= self._clear
+            hard_clear = (not math.isfinite(front)) or front >= self._front_release
+            if soft_clear:
                 self._front_clear_count += 1
             else:
                 self._front_clear_count = 0
 
-            if self._front_clear_count >= self._front_clear_exit_frames:
+            # Hard clear exits quickly; soft clear exits after the same stable
+            # frame count. Without this, a steady 36-44 cm reading can park the
+            # robot in OBSERVE forever.
+            if hard_clear or self._front_clear_count >= self._front_clear_exit_frames:
                 self._static_confirmed = False
                 self._set_state(DRIVE)
                 return False
