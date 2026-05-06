@@ -418,6 +418,7 @@ class ObstaclePerceptionNode(Node):
         self.get_logger().info(
             'Obstacle perception ready. '
             f'lidar={scan_topic if self._use_lidar else "disabled"}, '
+            f'front_center={math.degrees(self._front_center_angle):.0f}deg, '
             f'depth_image={depth_topic if self._use_depth else "disabled"}, '
             f'pointcloud={pointcloud_topic if self._use_pointcloud else "disabled"}, '
             f'pointcloud_qos={self._pointcloud_qos}, '

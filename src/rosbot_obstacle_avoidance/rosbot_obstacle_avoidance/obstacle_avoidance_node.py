@@ -229,10 +229,10 @@ class ObstacleAvoidanceNode(Node):
             sep,
             f'  [PRIORITY ORDER in each loop tick]',
             f'    0. ToF emergency         → STOP',
-            f'    1. Side scrape <{_cm(self._side_guard)} → SIDE_ESCAPE (rotate away)',
-            f'    2. Front <{_cm(self._hard_backup)}            → BACKUP immediately',
-            f'    3. Dead-end              → BACKUP + ROTATE',
-            f'    4. Front ≤{_cm(self._clear)}           → OBSERVE (stop & watch)',
+            f'    1. Front <{_cm(self._hard_backup)}            → BACKUP immediately',
+            f'    2. Dead-end              → BACKUP + ROTATE',
+            f'    3. Front ≤{_cm(self._clear)}           → OBSERVE (stop & watch)',
+            f'    4. Side scrape <{_cm(self._side_guard)} → SIDE_ESCAPE (if front clear)',
             f'    5. Default               → DRIVE straight, no corridor centering',
             sep,
             f'  [LOG LEGEND]',
@@ -328,15 +328,6 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
-        # Priority 0: side collision guard. This is not corridor centering;
-        # it only prevents scraping/hitting when one side is extremely close.
-        if self._side_danger(snap):
-            self._start_side_escape(snap)
-            self._handle_side_escape(twist, snap, now)
-            self._log('side_guard_escape', snap)
-            self._publish_cmd(twist)
-            return
-
         # Priority 1: too close = backup, not dodge.
         if self._too_close(snap):
             self._start_backup()
@@ -358,6 +349,15 @@ class ObstacleAvoidanceNode(Node):
             self._start_observe()
             self._handle_observe(twist, snap, front)
             self._log('observe_start', snap)
+            self._publish_cmd(twist)
+            return
+
+        # Priority 4: side collision guard. This is not corridor centering;
+        # it only prevents scraping/hitting when the forward path is clear.
+        if self._side_danger(snap):
+            self._start_side_escape(snap)
+            self._handle_side_escape(twist, snap, now)
+            self._log('side_guard_escape', snap)
             self._publish_cmd(twist)
             return
 
