@@ -92,10 +92,10 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_distance', 0.28)
         self.declare_parameter('stop_distance', 0.15)
         self.declare_parameter('hard_backup_distance', 0.10)
-        self.declare_parameter('dodge_clearance', 0.25)
+        self.declare_parameter('dodge_clearance', 0.03)
         self.declare_parameter('rear_stop_distance', 0.20)
-        self.declare_parameter('side_guard_distance', 0.07)
-        self.declare_parameter('side_escape_distance', 0.12)
+        self.declare_parameter('side_guard_distance', 0.03)
+        self.declare_parameter('side_escape_distance', 0.05)
         self.declare_parameter('side_escape_angular_speed', 0.22)
         self.declare_parameter('side_escape_sec', 0.45)
         self.declare_parameter('dynamic_observe_distance', 0.80)
@@ -207,7 +207,7 @@ class ObstacleAvoidanceNode(Node):
             f'    hard_backup        : {_cm(self._hard_backup)}  emergency backup trigger',
             f'    clear_distance     : {_cm(self._clear)}  ← LIDAR/depth suspicious zone',
             f'    stop_distance      : {_cm(self._stop)}  static obstacle dodge trigger',
-            f'    dodge_clearance    : {_cm(self._dodge_clear)}  ← min side clearance to dodge (not dead-end)',
+            f'    dodge_clearance    : {_cm(self._dodge_clear)}  dead-end side clearance',
             f'    side_guard         : {_cm(self._side_guard)}  ← side scrape emergency',
             f'    side_escape        : {_cm(self._side_escape)}  ← side escape exit threshold',
             f'    rear_stop          : {_cm(self._rear_stop)}  ← blocks backup if rear blocked',

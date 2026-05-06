@@ -24,7 +24,7 @@ obstacle_perception:
     front_angle_deg: 28.0
     front_percentile: 15.0
     robot_half_width_m: 0.13
-    front_path_half_width_m: 0.18
+    front_path_half_width_m: 0.16
     side_guard_forward_m: 0.35
     side_guard_rear_m: 0.20
     side_percentile: 10.0
@@ -104,10 +104,10 @@ obstacle_avoidance:
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
     stop_distance: 0.15        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
-    dodge_clearance: 0.25      # min side clearance for dodge (not dead-end)
+    dodge_clearance: 0.03      # min side clearance for dead-end; robot half-width + 3 cm corridor
     rear_stop_distance: 0.20
-    side_guard_distance: 0.07
-    side_escape_distance: 0.12
+    side_guard_distance: 0.03
+    side_escape_distance: 0.05
     side_escape_angular_speed: 0.22
     side_escape_sec: 0.45
     dynamic_observe_distance: 0.80

@@ -97,7 +97,7 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('front_angle_deg', 30.0)
         self.declare_parameter('front_percentile', 15.0)
         self.declare_parameter('robot_half_width_m', 0.13)
-        self.declare_parameter('front_path_half_width_m', 0.18)
+        self.declare_parameter('front_path_half_width_m', 0.16)
         self.declare_parameter('side_guard_forward_m', 0.35)
         self.declare_parameter('side_guard_rear_m', 0.20)
         self.declare_parameter('side_percentile', 10.0)
