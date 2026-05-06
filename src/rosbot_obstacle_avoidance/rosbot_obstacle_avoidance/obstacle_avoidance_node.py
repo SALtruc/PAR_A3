@@ -8,7 +8,7 @@ Behaviour goal:
 - If the object remains: dodge gently toward the clearer side.
 - If it is too close or a true dead-end: backup, then rotate to recover.
 
-States: DRIVE | OBSERVE | DODGE | SIDE_ESCAPE | BACKUP | ROTATE | STOPPED
+States: DRIVE | OBSERVE | DODGE | SIDE_ESCAPE | EDGE_ESCAPE | BACKUP | ROTATE | STOPPED
 """
 
 import json
@@ -20,7 +20,7 @@ import rclpy
 from geometry_msgs.msg import Twist, TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from sensor_msgs.msg import BatteryState
+from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import String
 
 
@@ -54,10 +54,23 @@ def _as_bool(value) -> bool:
     return bool(value)
 
 
+def _split_topics(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [part.strip() for part in str(value).split(',') if part.strip()]
+
+
+def _angle_delta(value: float, reference: float) -> float:
+    return math.atan2(math.sin(value - reference), math.cos(value - reference))
+
+
 @dataclass
 class Snap:
     front_lidar: float
     front_depth: float
+    front_tof: float
     left: float
     right: float
     rear: float
@@ -78,6 +91,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
         self.declare_parameter('battery_topic', '/battery')
         self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('imu_topic', '/imu')
+        self.declare_parameter('front_tof_topics', '/range/fl,/range/fr')
         self.declare_parameter('state_topic', '/obstacle_avoidance_state')
         self.declare_parameter('cmd_vel_stamped', True)
         self.declare_parameter('cmd_vel_frame_id', 'base_link')
@@ -95,6 +110,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_distance', 0.28)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
+        self.declare_parameter('front_tof_obstacle_distance', 0.30)
+        self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('dodge_clearance', 0.03)
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.03)
@@ -139,6 +156,10 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('contact_stall_sec', 0.55)
         self.declare_parameter('contact_recovery_cooldown_sec', 1.8)
         self.declare_parameter('contact_odom_stale_sec', 0.5)
+        self.declare_parameter('tilt_recovery_enabled', True)
+        self.declare_parameter('tilt_backup_deg', 8.0)
+        self.declare_parameter('tilt_stop_deg', 18.0)
+        self.declare_parameter('tilt_imu_stale_sec', 0.6)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 0.7)
 
@@ -147,6 +168,8 @@ class ObstacleAvoidanceNode(Node):
         cmd_vel_topic = p('cmd_vel_topic').value
         battery_topic = p('battery_topic').value
         odom_topic = p('odom_topic').value
+        imu_topic = p('imu_topic').value
+        self._front_tof_topics = _split_topics(p('front_tof_topics').value)
         state_topic = p('state_topic').value
         hz = float(p('control_hz').value)
 
@@ -165,6 +188,11 @@ class ObstacleAvoidanceNode(Node):
         self._hard_backup = max(
             0.0,
             min(float(p('hard_backup_distance').value), self._stop * 0.95),
+        )
+        self._front_tof_obstacle = max(0.0, float(p('front_tof_obstacle_distance').value))
+        self._front_tof_hard = max(
+            0.0,
+            min(float(p('front_tof_hard_distance').value), self._front_tof_obstacle),
         )
         self._dodge_clear = float(p('dodge_clearance').value)
         self._rear_stop = float(p('rear_stop_distance').value)
@@ -204,6 +232,10 @@ class ObstacleAvoidanceNode(Node):
         self._contact_stall_sec = max(0.0, float(p('contact_stall_sec').value))
         self._contact_cooldown_sec = max(0.0, float(p('contact_recovery_cooldown_sec').value))
         self._contact_odom_stale_sec = max(0.05, float(p('contact_odom_stale_sec').value))
+        self._tilt_recovery_enabled = _as_bool(p('tilt_recovery_enabled').value)
+        self._tilt_backup_rad = math.radians(max(0.0, float(p('tilt_backup_deg').value)))
+        self._tilt_stop_rad = math.radians(max(0.0, float(p('tilt_stop_deg').value)))
+        self._tilt_imu_stale = max(0.05, float(p('tilt_imu_stale_sec').value))
         self._debug = _as_bool(p('debug_decisions').value)
         self._debug_period = float(p('debug_period_sec').value)
         self._creep_speed = float(p('creep_speed').value)
@@ -230,6 +262,9 @@ class ObstacleAvoidanceNode(Node):
         self._odom_linear = 0.0
         self._odom_angular = 0.0
         self._odom_time = None
+        self._tilt_rad = 0.0
+        self._imu_baseline: tuple[float, float] | None = None
+        self._imu_time = None
         self._motion_cmd_since = None
         self._contact_pending = False
         self._contact_cooldown_until = 0.0
@@ -238,6 +273,7 @@ class ObstacleAvoidanceNode(Node):
         self.create_subscription(String, obstacle_topic, self._on_obstacle, 10)
         self.create_subscription(BatteryState, battery_topic, self._on_battery, 10)
         self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
+        self.create_subscription(Imu, imu_topic, self._on_imu, 10)
         self._cmd_pub = self.create_publisher(vel_type, cmd_vel_topic, 10)
         self._state_pub = self.create_publisher(String, state_topic, 10)
         self.create_timer(1.0 / max(hz, 1.0), self._loop)
@@ -259,6 +295,7 @@ class ObstacleAvoidanceNode(Node):
             f'    clear_distance     : {_cm(self._clear)}  ← LIDAR/depth suspicious zone',
             f'    stop_distance      : {_cm(self._stop)}  static obstacle dodge trigger',
             f'    dodge_clearance    : {_cm(self._dodge_clear)}  dead-end side clearance',
+            f'    front_tof          : {_cm(self._front_tof_obstacle)} obstacle, {_cm(self._front_tof_hard)} hard',
             f'    front_release      : {_cm(self._front_release)} after {self._front_clear_exit_frames} clear frames',
             f'    edge_escape        : front<{_cm(self._edge_escape_front)} with side>{_cm(self._edge_escape_clear)}',
             f'    side_guard         : {_cm(self._side_guard)}  ← side scrape emergency',
@@ -281,6 +318,7 @@ class ObstacleAvoidanceNode(Node):
             f'    BACKUP             : Reverse {self._backup_speed:.3f} m/s for {self._backup_sec:.2f}s then ROTATE.',
             f'    CONTACT RECOVERY   : cmd>{self._contact_cmd_speed_min:.3f} m/s but odom<{self._contact_odom_speed_max:.3f} m/s',
             f'                         for {self._contact_stall_sec:.2f}s -> BACKUP + ROTATE.',
+            f'    TILT RECOVERY      : IMU tilt>{math.degrees(self._tilt_backup_rad):.0f}deg -> BACKUP, >{math.degrees(self._tilt_stop_rad):.0f}deg -> STOP.',
             f'    ROTATE             : {math.degrees(self._rot_ang * self._rotate_sec):.0f}° per step, max {self._max_rotations} attempts.',
             sep,
             f'  [PRIORITY ORDER in each loop tick]',
@@ -331,6 +369,35 @@ class ObstacleAvoidanceNode(Node):
             self._odom_angular = abs(wz)
         self._odom_time = time.monotonic()
 
+    def _on_imu(self, msg: Imu):
+        q = msg.orientation
+        x = float(q.x)
+        y = float(q.y)
+        z = float(q.z)
+        w = float(q.w)
+        if not all(math.isfinite(v) for v in (x, y, z, w)):
+            return
+
+        sinr_cosp = 2.0 * (w * x + y * z)
+        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+
+        sinp = 2.0 * (w * y - z * x)
+        if abs(sinp) >= 1.0:
+            pitch = math.copysign(math.pi / 2.0, sinp)
+        else:
+            pitch = math.asin(sinp)
+
+        if self._imu_baseline is None:
+            self._imu_baseline = (roll, pitch)
+
+        base_roll, base_pitch = self._imu_baseline
+        self._tilt_rad = max(
+            abs(_angle_delta(roll, base_roll)),
+            abs(_angle_delta(pitch, base_pitch)),
+        )
+        self._imu_time = time.monotonic()
+
     # ---------------------------------------------------------------------
     # Main FSM
     # ---------------------------------------------------------------------
@@ -355,6 +422,19 @@ class ObstacleAvoidanceNode(Node):
         snap = self._snap()
         front = self._effective_front(snap)
 
+        if self._tilt_stop(now):
+            self._set_state(STOPPED)
+            self._log('tilt_stop', snap)
+            self._publish_cmd(twist)
+            return
+
+        if self._tilt_backup(now) and self._state not in (BACKUP, STOPPED):
+            self._start_backup()
+            self._handle_backup(twist, snap, now)
+            self._log('tilt_backup', snap)
+            self._publish_cmd(twist)
+            return
+
         # Track when dynamic obstacle was first seen (reset when gone).
         if snap.dynamic:
             if self._dynamic_first_seen is None:
@@ -362,7 +442,7 @@ class ObstacleAvoidanceNode(Node):
         else:
             self._dynamic_first_seen = None
 
-        if snap.tof_emergency:
+        if snap.tof_emergency and not math.isfinite(snap.front_tof):
             self._set_state(STOPPED)
             self._log('tof_emergency_stop', snap)
             self._publish_cmd(twist)
@@ -725,6 +805,11 @@ class ObstacleAvoidanceNode(Node):
         """
         lidar = snap.front_lidar
         depth = snap.front_depth
+        tof = snap.front_tof
+
+        if math.isfinite(tof):
+            if tof <= self._front_tof_obstacle:
+                return min(lidar, depth, tof)
 
         if snap.depth_ok and math.isfinite(depth):
             # Real close depth obstacle: trust depth.
@@ -753,12 +838,16 @@ class ObstacleAvoidanceNode(Node):
             and math.isfinite(snap.front_depth)
             and snap.front_depth <= self._clear
         )
+        tof_suspicious = (
+            math.isfinite(snap.front_tof)
+            and snap.front_tof <= self._front_tof_obstacle
+        )
         dynamic_suspicious = (
             snap.dynamic
             and math.isfinite(front)
             and front <= self._dynamic_observe
         )
-        return lidar_suspicious or depth_suspicious or dynamic_suspicious
+        return lidar_suspicious or depth_suspicious or tof_suspicious or dynamic_suspicious
 
     def _depth_confirms_clear(self, snap: Snap) -> bool:
         return (
@@ -779,7 +868,11 @@ class ObstacleAvoidanceNode(Node):
             math.isfinite(snap.front_depth)
             and snap.front_depth <= self._hard_backup
         )
-        return lidar_too_close or depth_too_close
+        tof_too_close = (
+            math.isfinite(snap.front_tof)
+            and snap.front_tof <= self._front_tof_hard
+        )
+        return lidar_too_close or depth_too_close or tof_too_close
 
     def _side_danger(self, snap: Snap) -> bool:
         left_close = math.isfinite(snap.left) and snap.left < self._side_guard
@@ -831,6 +924,7 @@ class ObstacleAvoidanceNode(Node):
         fused = data.get('fused', {})
         lidar = data.get('lidar', {})
         depth = data.get('depth', {})
+        tof = data.get('tof', {})
 
         source = list(fused.get('source', []))
         lidar_ok = bool(lidar.get('available', False))
@@ -841,6 +935,7 @@ class ObstacleAvoidanceNode(Node):
         return Snap(
             front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
             front_depth=_finite(depth.get('front_min')),
+            front_tof=self._front_tof_distance(tof),
             left=_finite(fused.get('left_distance')),
             right=_finite(fused.get('right_distance')),
             rear=_finite(fused.get('rear_distance')),
@@ -850,6 +945,18 @@ class ObstacleAvoidanceNode(Node):
             lidar_ok=lidar_ok,
             depth_ok=depth_ok,
         )
+
+    def _front_tof_distance(self, tof: dict) -> float:
+        topics = tof.get('topics', {}) if isinstance(tof, dict) else {}
+        if not isinstance(topics, dict):
+            return math.inf
+
+        readings = []
+        for topic in self._front_tof_topics:
+            value = _finite(topics.get(topic))
+            if math.isfinite(value):
+                readings.append(value)
+        return min(readings) if readings else math.inf
 
     # ---------------------------------------------------------------------
     # ROS publish / logging
@@ -908,6 +1015,23 @@ class ObstacleAvoidanceNode(Node):
                 '[CONTACT] cmd forward but odom is near zero; backing up next tick'
             )
 
+    def _imu_recent(self, now: float) -> bool:
+        return self._imu_time is not None and now - self._imu_time <= self._tilt_imu_stale
+
+    def _tilt_backup(self, now: float) -> bool:
+        return (
+            self._tilt_recovery_enabled
+            and self._imu_recent(now)
+            and self._tilt_rad >= self._tilt_backup_rad
+        )
+
+    def _tilt_stop(self, now: float) -> bool:
+        return (
+            self._tilt_recovery_enabled
+            and self._imu_recent(now)
+            and self._tilt_rad >= self._tilt_stop_rad
+        )
+
     def _publish_cmd(self, twist: Twist):
         self._track_contact_stall(twist)
 
@@ -939,6 +1063,9 @@ class ObstacleAvoidanceNode(Node):
         dyn_elapsed = ''
         if snap.dynamic and self._dynamic_first_seen is not None:
             dyn_elapsed = f' dyn_elapsed={time.monotonic() - self._dynamic_first_seen:.1f}s'
+        tilt_info = ''
+        if self._imu_recent(now):
+            tilt_info = f' tilt={math.degrees(self._tilt_rad):.0f}deg'
         creep_info = (
             f' [CREEP->{_cm(self._stop)}]'
             if (self._state == OBSERVE and self._static_confirmed
@@ -949,9 +1076,10 @@ class ObstacleAvoidanceNode(Node):
             f'[NAV] state={self._state} reason={reason}{creep_info} '
             f'front_lidar={_cm(snap.front_lidar)} '
             f'front_depth={_cm(snap.front_depth)} '
+            f'front_tof={_cm(snap.front_tof)} '
             f'front_eff={_cm(front)} '
             f'left={_cm(snap.left)} right={_cm(snap.right)} rear={_cm(snap.rear)} '
-            f'dynamic={snap.dynamic}{dyn_elapsed} turn={"L" if self._turn_dir > 0 else "R"} '
+            f'dynamic={snap.dynamic}{dyn_elapsed}{tilt_info} turn={"L" if self._turn_dir > 0 else "R"} '
             f'obs={self._observe_count}'
         )
         if self._state in (OBSERVE, DODGE, SIDE_ESCAPE, EDGE_ESCAPE, BACKUP, ROTATE):
