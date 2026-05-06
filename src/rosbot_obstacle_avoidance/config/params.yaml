@@ -42,6 +42,10 @@ obstacle_perception:
 
     # Pointcloud kept off for stability. Turn on only for ablation/demo if needed.
     pointcloud_frame: optical
+    pointcloud_target_frame: base_link
+    pointcloud_use_tf: true
+    pointcloud_tf_timeout_sec: 0.03
+    pointcloud_qos: sensor_data
     pointcloud_percentile: 10.0
     pointcloud_center_half_width_m: 0.35
     pointcloud_side_min_abs_m: 0.15
@@ -98,7 +102,8 @@ obstacle_avoidance:
 
     # Main thresholds
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
-    stop_distance: 0.15        # too-close threshold → BACKUP; also dodge trigger after static confirm
+    stop_distance: 0.15        # static obstacle threshold -> DODGE after observation
+    hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
     dodge_clearance: 0.25      # min side clearance for dodge (not dead-end)
     rear_stop_distance: 0.20
     side_guard_distance: 0.07

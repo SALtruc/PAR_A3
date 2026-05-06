@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -23,6 +24,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
     qos_profile_sensor_data,
 )
+from rclpy.time import Time
 from sensor_msgs.msg import Image, LaserScan, PointCloud2, Range
 from std_msgs.msg import String
 
@@ -30,6 +32,11 @@ try:
     from sensor_msgs_py import point_cloud2
 except Exception:  # pragma: no cover - only happens outside ROS installations.
     point_cloud2 = None
+
+try:
+    import tf2_ros
+except Exception:  # pragma: no cover - only happens outside ROS installations.
+    tf2_ros = None
 
 
 def _as_bool(value) -> bool:
@@ -105,6 +112,10 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_side_fraction', 0.30)
         self.declare_parameter('depth_height_fraction', 0.40)
         self.declare_parameter('pointcloud_frame', 'optical')
+        self.declare_parameter('pointcloud_target_frame', 'base_link')
+        self.declare_parameter('pointcloud_use_tf', True)
+        self.declare_parameter('pointcloud_tf_timeout_sec', 0.03)
+        self.declare_parameter('pointcloud_qos', 'sensor_data')
         self.declare_parameter('pointcloud_percentile', 10.0)
         self.declare_parameter('pointcloud_center_half_width_m', 0.35)
         self.declare_parameter('pointcloud_side_min_abs_m', 0.15)
@@ -219,6 +230,19 @@ class ObstaclePerceptionNode(Node):
         self._pointcloud_frame = str(
             self.get_parameter('pointcloud_frame').value
         ).strip().lower()
+        self._pointcloud_target_frame = str(
+            self.get_parameter('pointcloud_target_frame').value
+        ).strip()
+        self._pointcloud_use_tf = _as_bool(
+            self.get_parameter('pointcloud_use_tf').value
+        )
+        self._pointcloud_tf_timeout = max(
+            0.0,
+            float(self.get_parameter('pointcloud_tf_timeout_sec').value),
+        )
+        self._pointcloud_qos = str(
+            self.get_parameter('pointcloud_qos').value
+        ).strip().lower()
         self._pointcloud_percentile = max(
             0.0,
             min(100.0, float(self.get_parameter('pointcloud_percentile').value)),
@@ -329,6 +353,19 @@ class ObstaclePerceptionNode(Node):
         self._blocked_sources: list[str] = []
         self._bridge = CvBridge()
         self._subscriptions = []
+        self._tf_buffer = None
+        self._tf_listener = None
+        self._last_pointcloud_warn = 0.0
+
+        if self._use_pointcloud and self._pointcloud_use_tf:
+            if tf2_ros is None:
+                self.get_logger().warn(
+                    'tf2_ros is unavailable; point cloud uses fallback optical/base axes.'
+                )
+                self._pointcloud_use_tf = False
+            else:
+                self._tf_buffer = tf2_ros.Buffer()
+                self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
 
         if self._use_lidar:
             self._subscriptions.append(
@@ -356,22 +393,12 @@ class ObstaclePerceptionNode(Node):
                 )
                 self._use_pointcloud = False
             else:
-                # /oak/points on this ROSbot publishes PointCloud2 with
-                # RELIABLE + TRANSIENT_LOCAL QoS. qos_profile_sensor_data is
-                # usually BEST_EFFORT + VOLATILE, which can silently prevent
-                # matching and make depth/pointcloud appear off in the fused log.
-                pointcloud_qos = QoSProfile(
-                    reliability=ReliabilityPolicy.RELIABLE,
-                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                    history=HistoryPolicy.KEEP_LAST,
-                    depth=10,
-                )
                 self._subscriptions.append(
                     self.create_subscription(
                         PointCloud2,
                         pointcloud_topic,
                         self._on_pointcloud,
-                        pointcloud_qos,
+                        self._pointcloud_qos_profile(),
                     )
                 )
         if self._use_tof:
@@ -393,9 +420,32 @@ class ObstaclePerceptionNode(Node):
             f'lidar={scan_topic if self._use_lidar else "disabled"}, '
             f'depth_image={depth_topic if self._use_depth else "disabled"}, '
             f'pointcloud={pointcloud_topic if self._use_pointcloud else "disabled"}, '
+            f'pointcloud_qos={self._pointcloud_qos}, '
+            f'pointcloud_tf={self._pointcloud_target_frame if self._pointcloud_use_tf else "fallback"}, '
             f'tof={",".join(tof_topics) if self._use_tof else "disabled"}, '
             f'out={obstacle_topic}'
         )
+
+    def _pointcloud_qos_profile(self) -> QoSProfile:
+        if self._pointcloud_qos in ('reliable_transient_local', 'transient_local'):
+            return QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=10,
+            )
+        if self._pointcloud_qos in ('reliable',):
+            return QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.VOLATILE,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=10,
+            )
+        if self._pointcloud_qos not in ('sensor_data', 'best_effort', 'best-effort'):
+            self.get_logger().warn(
+                f'Unknown pointcloud_qos={self._pointcloud_qos!r}; using sensor_data.'
+            )
+        return qos_profile_sensor_data
 
     def _on_scan(self, msg: LaserScan):
         self._latest_scan = msg
@@ -448,10 +498,12 @@ class ObstaclePerceptionNode(Node):
         front_vals: list[float] = []
         left_vals: list[float] = []
         right_vals: list[float] = []
+        transform = self._pointcloud_transform(msg)
 
         try:
             points = self._sample_pointcloud(msg)
-        except Exception:
+        except Exception as exc:
+            self._warn_pointcloud(f'Point cloud read failed: {exc}')
             return
 
         for index, point in enumerate(points):
@@ -465,7 +517,14 @@ class ObstaclePerceptionNode(Node):
             if xyz is None:
                 continue
             x, y, z = xyz
-            forward, lateral, vertical = self._pointcloud_axes(x, y, z)
+            if transform is not None:
+                forward, lateral, vertical = self._transform_point_axes(
+                    x, y, z, transform
+                )
+            else:
+                forward, lateral, vertical = self._pointcloud_axes(
+                    x, y, z, msg.header.frame_id
+                )
             if not (
                     math.isfinite(forward)
                     and math.isfinite(lateral)
@@ -479,14 +538,14 @@ class ObstaclePerceptionNode(Node):
             if abs(lateral) <= self._pointcloud_center_half_width_m:
                 front_vals.append(forward)
             elif (
-                    -self._pointcloud_side_max_abs_m
-                    <= lateral
-                    <= -self._pointcloud_side_min_abs_m):
-                left_vals.append(forward)
-            elif (
                     self._pointcloud_side_min_abs_m
                     <= lateral
                     <= self._pointcloud_side_max_abs_m):
+                left_vals.append(forward)
+            elif (
+                    -self._pointcloud_side_max_abs_m
+                    <= lateral
+                    <= -self._pointcloud_side_min_abs_m):
                 right_vals.append(forward)
 
         self._last_pointcloud_time = now
@@ -524,10 +583,61 @@ class ObstaclePerceptionNode(Node):
             except (IndexError, KeyError, TypeError, ValueError):
                 return None
 
-    def _pointcloud_axes(self, x: float, y: float, z: float) -> tuple[float, float, float]:
-        if self._pointcloud_frame in ('base', 'base_link', 'ros'):
+    def _pointcloud_transform(self, msg: PointCloud2):
+        if (
+                not self._pointcloud_use_tf
+                or self._tf_buffer is None
+                or not self._pointcloud_target_frame):
+            return None
+
+        source_frame = str(msg.header.frame_id).strip().lstrip('/')
+        target_frame = self._pointcloud_target_frame.strip().lstrip('/')
+        if not source_frame or source_frame == target_frame:
+            return None
+
+        try:
+            return self._tf_buffer.lookup_transform(
+                target_frame,
+                source_frame,
+                Time(),
+                timeout=Duration(seconds=self._pointcloud_tf_timeout),
+            ).transform
+        except Exception as exc:
+            self._warn_pointcloud(
+                f'Point cloud TF {source_frame}->{target_frame} unavailable: {exc}'
+            )
+            return None
+
+    def _warn_pointcloud(self, text: str):
+        now = time.monotonic()
+        if now - self._last_pointcloud_warn >= 2.0:
+            self._last_pointcloud_warn = now
+            self.get_logger().warn(text)
+
+    @staticmethod
+    def _transform_point_axes(x: float, y: float, z: float, transform) -> tuple[float, float, float]:
+        q = transform.rotation
+        t = transform.translation
+        tx = 2.0 * (q.y * z - q.z * y)
+        ty = 2.0 * (q.z * x - q.x * z)
+        tz = 2.0 * (q.x * y - q.y * x)
+        rx = x + q.w * tx + (q.y * tz - q.z * ty)
+        ry = y + q.w * ty + (q.z * tx - q.x * tz)
+        rz = z + q.w * tz + (q.x * ty - q.y * tx)
+        return rx + t.x, ry + t.y, rz + t.z
+
+    def _pointcloud_axes(
+            self,
+            x: float,
+            y: float,
+            z: float,
+            frame_id: str = '') -> tuple[float, float, float]:
+        frame = self._pointcloud_frame
+        if frame == 'auto':
+            frame = str(frame_id).strip().lower()
+        if frame in ('base', 'base_link', 'ros') or frame.endswith('base_link'):
             return x, y, z
-        return z, x, y
+        return z, -x, -y
 
     def _pointcloud_stat(self, values: list[float]) -> float:
         if not values:

@@ -91,6 +91,7 @@ class ObstacleAvoidanceNode(Node):
         # Distances, metres
         self.declare_parameter('clear_distance', 0.28)
         self.declare_parameter('stop_distance', 0.15)
+        self.declare_parameter('hard_backup_distance', 0.10)
         self.declare_parameter('dodge_clearance', 0.25)
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.07)
@@ -139,6 +140,10 @@ class ObstacleAvoidanceNode(Node):
 
         self._clear = float(p('clear_distance').value)
         self._stop = float(p('stop_distance').value)
+        self._hard_backup = max(
+            0.0,
+            min(float(p('hard_backup_distance').value), self._stop * 0.95),
+        )
         self._dodge_clear = float(p('dodge_clearance').value)
         self._rear_stop = float(p('rear_stop_distance').value)
         self._side_guard = float(p('side_guard_distance').value)
@@ -199,8 +204,9 @@ class ObstacleAvoidanceNode(Node):
             'OBSTACLE AVOIDANCE - DETECTION POLICY SUMMARY',
             sep,
             f'  [THRESHOLDS]',
+            f'    hard_backup        : {_cm(self._hard_backup)}  emergency backup trigger',
             f'    clear_distance     : {_cm(self._clear)}  ← LIDAR/depth suspicious zone',
-            f'    stop_distance      : {_cm(self._stop)}  ← too-close backup trigger & dodge trigger',
+            f'    stop_distance      : {_cm(self._stop)}  static obstacle dodge trigger',
             f'    dodge_clearance    : {_cm(self._dodge_clear)}  ← min side clearance to dodge (not dead-end)',
             f'    side_guard         : {_cm(self._side_guard)}  ← side scrape emergency',
             f'    side_escape        : {_cm(self._side_escape)}  ← side escape exit threshold',
@@ -224,7 +230,7 @@ class ObstacleAvoidanceNode(Node):
             f'  [PRIORITY ORDER in each loop tick]',
             f'    0. ToF emergency         → STOP',
             f'    1. Side scrape <{_cm(self._side_guard)} → SIDE_ESCAPE (rotate away)',
-            f'    2. Front <{_cm(self._stop)}            → BACKUP immediately',
+            f'    2. Front <{_cm(self._hard_backup)}            → BACKUP immediately',
             f'    3. Dead-end              → BACKUP + ROTATE',
             f'    4. Front ≤{_cm(self._clear)}           → OBSERVE (stop & watch)',
             f'    5. Default               → DRIVE straight, no corridor centering',
@@ -432,7 +438,7 @@ class ObstacleAvoidanceNode(Node):
         # At stop_distance: initiate dodge toward the clearer side.
         self._static_confirmed = False
         self._start_dodge(snap)
-        return True
+        return self._handle_dodge(twist, snap, front, now)
 
     def _start_dodge(self, snap: Snap):
         self._turn_dir = self._clearer_side(snap.left, snap.right)
@@ -593,9 +599,16 @@ class ObstacleAvoidanceNode(Node):
         )
 
     def _too_close(self, snap: Snap) -> bool:
-        # Hard safety: any confirmed front reading under stop distance.
-        lidar_too_close = math.isfinite(snap.front_lidar) and snap.front_lidar <= self._stop
-        depth_too_close = math.isfinite(snap.front_depth) and snap.front_depth <= self._stop
+        # Hard safety: backup only when the front is closer than the dodge trigger.
+        # At stop_distance a confirmed static obstacle should dodge, not reverse.
+        lidar_too_close = (
+            math.isfinite(snap.front_lidar)
+            and snap.front_lidar <= self._hard_backup
+        )
+        depth_too_close = (
+            math.isfinite(snap.front_depth)
+            and snap.front_depth <= self._hard_backup
+        )
         return lidar_too_close or depth_too_close
 
     def _side_danger(self, snap: Snap) -> bool:
