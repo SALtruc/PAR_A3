@@ -24,7 +24,7 @@ def generate_launch_description():
         DeclareLaunchArgument('max_speed', default_value='0.06'),
         DeclareLaunchArgument('backup_speed', default_value='0.04'),
         DeclareLaunchArgument('battery_topic', default_value='/battery'),
-        DeclareLaunchArgument('require_battery_ok', default_value='true'),
+        DeclareLaunchArgument('require_battery_ok', default_value='false'),
         DeclareLaunchArgument('min_battery_voltage', default_value='11.1'),
         DeclareLaunchArgument('warn_battery_voltage', default_value='11.4'),
         DeclareLaunchArgument('battery_stale_sec', default_value='3.0'),
