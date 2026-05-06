@@ -83,14 +83,14 @@ class ObstacleAvoidanceNode(Node):
         # Motion
         self.declare_parameter('max_speed', 0.10)
         self.declare_parameter('observe_speed', 0.0)
-        self.declare_parameter('dodge_forward_speed', 0.045)
-        self.declare_parameter('dodge_angular_speed', 0.25)
+        self.declare_parameter('dodge_forward_speed', 0.035)
+        self.declare_parameter('dodge_angular_speed', 0.35)
         self.declare_parameter('rotation_angular_speed', 0.35)
         self.declare_parameter('backup_speed', 0.07)
 
         # Distances, metres
         self.declare_parameter('clear_distance', 0.28)
-        self.declare_parameter('stop_distance', 0.15)
+        self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
         self.declare_parameter('dodge_clearance', 0.03)
         self.declare_parameter('rear_stop_distance', 0.20)
@@ -104,9 +104,12 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('observe_frames', 8)
         self.declare_parameter('clear_observe_frames', 3)
         self.declare_parameter('backup_sec', 0.70)
-        self.declare_parameter('dodge_step_deg', 30.0)
+        self.declare_parameter('dodge_step_deg', 55.0)
+        self.declare_parameter('dodge_pivot_sec', 0.70)
         self.declare_parameter('rotation_step_deg', 70.0)
         self.declare_parameter('max_rotation_attempts', 3)
+        self.declare_parameter('clearer_side_deadband', 0.05)
+        self.declare_parameter('avoid_turn_direction', -1.0)
 
         # Static approach + dynamic timeout
         self.declare_parameter('creep_speed', 0.03)
@@ -155,9 +158,13 @@ class ObstacleAvoidanceNode(Node):
         self._observe_frames = max(1, int(p('observe_frames').value))
         self._clear_observe_frames = max(1, int(p('clear_observe_frames').value))
         self._backup_sec = float(p('backup_sec').value)
+        self._dodge_pivot_sec = max(0.0, float(p('dodge_pivot_sec').value))
         self._dodge_sec = math.radians(float(p('dodge_step_deg').value)) / max(abs(self._dodge_ang), 0.01)
         self._rotate_sec = math.radians(float(p('rotation_step_deg').value)) / max(abs(self._rot_ang), 0.01)
         self._max_rotations = max(1, int(p('max_rotation_attempts').value))
+        self._clearer_side_deadband = max(0.0, float(p('clearer_side_deadband').value))
+        fallback_turn = float(p('avoid_turn_direction').value)
+        self._fallback_turn_dir = 1.0 if fallback_turn >= 0.0 else -1.0
 
         self._require_battery = _as_bool(p('require_battery_ok').value)
         self._min_battery = float(p('min_battery_voltage').value)
@@ -170,6 +177,7 @@ class ObstacleAvoidanceNode(Node):
         self._dynamic_close = float(p('dynamic_close_distance').value)
 
         self._state = STOPPED
+        self._state_start = 0.0
         self._state_end = 0.0
         self._turn_dir = 1.0
         self._observe_count = 0
@@ -222,7 +230,7 @@ class ObstacleAvoidanceNode(Node):
             f'                         Object gone → DRIVE. Timed-out → treat as static.',
             f'    Phase 2B – STATIC  : Creep at {self._creep_speed:.3f} m/s toward obstacle.',
             f'                         Only dodge when front ≤ {_cm(self._stop)} (stop_distance).',
-            f'    DODGE              : Turn toward clearer side, forward {self._dodge_forward:.3f} m/s',
+            f'    DODGE              : Pivot {self._dodge_pivot_sec:.1f}s, then arc forward {self._dodge_forward:.3f} m/s',
             f'                         angular {self._dodge_ang:.2f} rad/s, step {math.degrees(self._dodge_ang * self._dodge_sec):.0f}° max.',
             f'    BACKUP             : Reverse {self._backup_speed:.3f} m/s for {self._backup_sec:.2f}s then ROTATE.',
             f'    ROTATE             : {math.degrees(self._rot_ang * self._rotate_sec):.0f}° per step, max {self._max_rotations} attempts.',
@@ -429,7 +437,7 @@ class ObstacleAvoidanceNode(Node):
             return True
 
         # If still outside stop_distance, creep forward slowly.
-        # Robot approached to 15 cm then dodge — do not dodge from far away.
+        # Robot approaches to stop_distance, then dodges.
         if front > self._stop:
             twist.linear.x = self._creep_speed
             twist.angular.z = 0.0
@@ -449,18 +457,29 @@ class ObstacleAvoidanceNode(Node):
             self._start_backup()
             return True
 
-        # Exit dodge once front is usable again.
-        if front > self._clear or self._depth_confirms_clear(snap):
-            self._set_state(DRIVE)
-            return False
+        elapsed = max(0.0, now - self._state_start)
+        if elapsed < self._dodge_pivot_sec:
+            # Pure pivot: turn in place. Do NOT exit early — a partial rotation
+            # moves the obstacle out of the LIDAR front sector producing a
+            # false-clear reading that would cause the robot to drive straight
+            # into the obstacle.
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_dir * self._dodge_ang
+            return True
 
         if now < self._state_end:
+            # Arc phase: forward + angular. Commit to the full arc.
+            # Do NOT exit early on a front-clear reading — the obstacle just
+            # rotated out of the scan sector; it is still physically there.
             twist.linear.x = self._dodge_forward
             twist.angular.z = self._turn_dir * self._dodge_ang
             return True
 
-        # Finished one gentle dodge step. Continue straight in the new heading.
-        self._set_state(DRIVE)
+        # Full arc completed. Re-enter OBSERVE to verify the new heading
+        # before resuming straight drive. If the obstacle is still detectable
+        # from the new heading, OBSERVE will initiate another dodge step —
+        # the robot keeps arcing until the obstacle is fully cleared.
+        self._start_observe()
         return False
 
 
@@ -622,11 +641,14 @@ class ObstacleAvoidanceNode(Node):
         right_blocked = math.isfinite(snap.right) and snap.right < self._dodge_clear
         return front_blocked and left_blocked and right_blocked
 
-    @staticmethod
-    def _clearer_side(left: float, right: float) -> float:
+    def _clearer_side(self, left: float, right: float) -> float:
         left_clear = left if math.isfinite(left) else math.inf
         right_clear = right if math.isfinite(right) else math.inf
-        return 1.0 if left_clear >= right_clear else -1.0
+        if math.isinf(left_clear) and math.isinf(right_clear):
+            return self._fallback_turn_dir
+        if abs(left_clear - right_clear) <= self._clearer_side_deadband:
+            return self._fallback_turn_dir
+        return 1.0 if left_clear > right_clear else -1.0
 
     def _snap(self) -> Snap:
         data = self._raw_obs or {}
@@ -658,15 +680,17 @@ class ObstacleAvoidanceNode(Node):
     # ---------------------------------------------------------------------
 
     def _set_state(self, state: str, duration: float = 0.0):
+        now = time.monotonic()
         if self._state != state:
             old = self._state
             self._state = state
+            self._state_start = now
             self._last_transition = f'{old}->{state}'
             self.get_logger().info(f'FSM: {old} -> {state}')
             msg = String()
             msg.data = f'{time.time():.3f},{state}'
             self._state_pub.publish(msg)
-        self._state_end = time.monotonic() + max(0.0, duration)
+        self._state_end = now + max(0.0, duration)
 
     def _publish_cmd(self, twist: Twist):
         if not self._stamped:

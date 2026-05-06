@@ -22,7 +22,7 @@ obstacle_perception:
     clear_distance: 0.35
     front_center_angle_deg: 0.0
     front_angle_deg: 28.0
-    front_percentile: 15.0
+    front_percentile: 5.0
     robot_half_width_m: 0.13
     front_path_half_width_m: 0.16
     side_guard_forward_m: 0.35
@@ -89,9 +89,10 @@ obstacle_avoidance:
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
-    dodge_forward_speed: 0.045
-    dodge_angular_speed: 0.25
-    dodge_step_deg: 30.0
+    dodge_forward_speed: 0.035
+    dodge_angular_speed: 0.35
+    dodge_step_deg: 55.0
+    dodge_pivot_sec: 0.70
 
     # Strong recovery only after too-close/dead-end
     rotation_angular_speed: 0.35
@@ -102,7 +103,7 @@ obstacle_avoidance:
 
     # Main thresholds
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
-    stop_distance: 0.15        # static obstacle threshold -> DODGE after observation
+    stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
     dodge_clearance: 0.03      # min side clearance for dead-end; robot half-width + 3 cm corridor
     rear_stop_distance: 0.20
@@ -113,6 +114,8 @@ obstacle_avoidance:
     dynamic_observe_distance: 0.80
     observe_frames: 8          # frames to confirm obstacle before classify static/dynamic
     clear_observe_frames: 3
+    clearer_side_deadband: 0.05
+    avoid_turn_direction: -1.0 # fallback when side clearances are nearly tied; -1 = right
 
     # Static approach + dynamic timeout
     creep_speed: 0.03          # m/s approach speed after static confirmed (to reach 15 cm then dodge)
