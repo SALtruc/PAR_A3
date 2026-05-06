@@ -63,8 +63,8 @@ obstacle_perception:
     dynamic_closing_speed: 0.80
     dynamic_confirm_sec: 0.20
     front_filter_alpha: 0.35
-    obstacle_hold_sec: 0.15
-    clear_confirm_sec: 0.10
+    obstacle_hold_sec: 0.30
+    clear_confirm_sec: 0.20
     depth_motion_enabled: true
     depth_motion_y_center: 0.68
     depth_motion_width_fraction: 0.45
@@ -78,6 +78,7 @@ obstacle_avoidance:
   ros__parameters:
     obstacle_topic: /obstacle_representation
     battery_topic: /battery
+    odom_topic: /odom
     cmd_vel_topic: /cmd_vel
     cmd_vel_stamped: true
     cmd_vel_frame_id: base_link
@@ -85,20 +86,20 @@ obstacle_avoidance:
     control_hz: 20.0
 
     # Default movement
-    max_speed: 0.10
+    max_speed: 0.12
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
-    dodge_forward_speed: 0.035
-    dodge_angular_speed: 0.35
-    dodge_step_deg: 55.0
-    dodge_pivot_sec: 0.70
+    dodge_forward_speed: 0.045
+    dodge_angular_speed: 0.45
+    dodge_step_deg: 60.0
+    dodge_pivot_sec: 0.60
 
     # Strong recovery only after too-close/dead-end
-    rotation_angular_speed: 0.35
+    rotation_angular_speed: 0.50
     rotation_step_deg: 70.0
     max_rotation_attempts: 3
-    backup_speed: 0.07
+    backup_speed: 0.08
     backup_sec: 0.70
 
     # Main thresholds
@@ -109,16 +110,24 @@ obstacle_avoidance:
     rear_stop_distance: 0.20
     side_guard_distance: 0.03
     side_escape_distance: 0.05
-    side_escape_angular_speed: 0.22
+    side_escape_angular_speed: 0.30
     side_escape_sec: 0.45
+    edge_escape_enabled: true
+    edge_escape_front_distance: 0.15
+    edge_escape_clearance: 0.30
+    edge_escape_angular_speed: 0.45
+    edge_escape_sec: 0.80
+    edge_escape_max_attempts: 3
     dynamic_observe_distance: 0.80
     observe_frames: 8          # frames to confirm obstacle before classify static/dynamic
     clear_observe_frames: 3
+    front_release_distance: 0.45
+    front_clear_exit_frames: 5
     clearer_side_deadband: 0.05
     avoid_turn_direction: -1.0 # fallback when side clearances are nearly tied; -1 = right
 
     # Static approach + dynamic timeout
-    creep_speed: 0.03          # m/s approach speed after static confirmed (to reach 15 cm then dodge)
+    creep_speed: 0.04          # m/s approach speed after static confirmed (to reach stop_distance then dodge)
     dynamic_timeout_sec: 5.0   # seconds to wait for dynamic object to clear before treating as static
     dynamic_close_distance: 0.20  # sudden dynamic appearance threshold (within 20 cm)
 
@@ -127,6 +136,14 @@ obstacle_avoidance:
     min_battery_voltage: 8.5
     warn_battery_voltage: 9.0
     battery_stale_sec: 3.0
+
+    contact_recovery_enabled: true
+    contact_cmd_speed_min: 0.025
+    contact_odom_speed_max: 0.012
+    contact_odom_angular_max: 0.08
+    contact_stall_sec: 0.55
+    contact_recovery_cooldown_sec: 1.8
+    contact_odom_stale_sec: 0.5
 
     debug_decisions: true
     debug_period_sec: 0.7

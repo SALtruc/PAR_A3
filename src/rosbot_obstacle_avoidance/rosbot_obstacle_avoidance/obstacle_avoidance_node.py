@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import rclpy
 from geometry_msgs.msg import Twist, TwistStamped
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
@@ -30,6 +31,7 @@ BACKUP = 'BACKUP'
 ROTATE = 'ROTATE'
 STOPPED = 'STOPPED'
 SIDE_ESCAPE = 'SIDE_ESCAPE'
+EDGE_ESCAPE = 'EDGE_ESCAPE'
 
 
 def _finite(value) -> float:
@@ -75,18 +77,19 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('obstacle_topic', '/obstacle_representation')
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
         self.declare_parameter('battery_topic', '/battery')
+        self.declare_parameter('odom_topic', '/odom')
         self.declare_parameter('state_topic', '/obstacle_avoidance_state')
         self.declare_parameter('cmd_vel_stamped', True)
         self.declare_parameter('cmd_vel_frame_id', 'base_link')
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.10)
+        self.declare_parameter('max_speed', 0.12)
         self.declare_parameter('observe_speed', 0.0)
-        self.declare_parameter('dodge_forward_speed', 0.035)
-        self.declare_parameter('dodge_angular_speed', 0.35)
-        self.declare_parameter('rotation_angular_speed', 0.35)
-        self.declare_parameter('backup_speed', 0.07)
+        self.declare_parameter('dodge_forward_speed', 0.045)
+        self.declare_parameter('dodge_angular_speed', 0.45)
+        self.declare_parameter('rotation_angular_speed', 0.50)
+        self.declare_parameter('backup_speed', 0.08)
 
         # Distances, metres
         self.declare_parameter('clear_distance', 0.28)
@@ -96,23 +99,31 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.03)
         self.declare_parameter('side_escape_distance', 0.05)
-        self.declare_parameter('side_escape_angular_speed', 0.22)
+        self.declare_parameter('side_escape_angular_speed', 0.30)
         self.declare_parameter('side_escape_sec', 0.45)
+        self.declare_parameter('edge_escape_enabled', True)
+        self.declare_parameter('edge_escape_front_distance', 0.15)
+        self.declare_parameter('edge_escape_clearance', 0.30)
+        self.declare_parameter('edge_escape_angular_speed', 0.45)
+        self.declare_parameter('edge_escape_sec', 0.80)
+        self.declare_parameter('edge_escape_max_attempts', 3)
         self.declare_parameter('dynamic_observe_distance', 0.80)
 
         # Timings / behaviour limits
         self.declare_parameter('observe_frames', 8)
         self.declare_parameter('clear_observe_frames', 3)
+        self.declare_parameter('front_release_distance', 0.45)
+        self.declare_parameter('front_clear_exit_frames', 5)
         self.declare_parameter('backup_sec', 0.70)
-        self.declare_parameter('dodge_step_deg', 55.0)
-        self.declare_parameter('dodge_pivot_sec', 0.70)
+        self.declare_parameter('dodge_step_deg', 60.0)
+        self.declare_parameter('dodge_pivot_sec', 0.60)
         self.declare_parameter('rotation_step_deg', 70.0)
         self.declare_parameter('max_rotation_attempts', 3)
         self.declare_parameter('clearer_side_deadband', 0.05)
         self.declare_parameter('avoid_turn_direction', -1.0)
 
         # Static approach + dynamic timeout
-        self.declare_parameter('creep_speed', 0.03)
+        self.declare_parameter('creep_speed', 0.04)
         self.declare_parameter('dynamic_timeout_sec', 5.0)
         self.declare_parameter('dynamic_close_distance', 0.20)
 
@@ -121,6 +132,13 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('min_battery_voltage', 8.5)
         self.declare_parameter('warn_battery_voltage', 9.0)
         self.declare_parameter('battery_stale_sec', 3.0)
+        self.declare_parameter('contact_recovery_enabled', True)
+        self.declare_parameter('contact_cmd_speed_min', 0.025)
+        self.declare_parameter('contact_odom_speed_max', 0.012)
+        self.declare_parameter('contact_odom_angular_max', 0.08)
+        self.declare_parameter('contact_stall_sec', 0.55)
+        self.declare_parameter('contact_recovery_cooldown_sec', 1.8)
+        self.declare_parameter('contact_odom_stale_sec', 0.5)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 0.7)
 
@@ -128,6 +146,7 @@ class ObstacleAvoidanceNode(Node):
         obstacle_topic = p('obstacle_topic').value
         cmd_vel_topic = p('cmd_vel_topic').value
         battery_topic = p('battery_topic').value
+        odom_topic = p('odom_topic').value
         state_topic = p('state_topic').value
         hz = float(p('control_hz').value)
 
@@ -153,10 +172,18 @@ class ObstacleAvoidanceNode(Node):
         self._side_escape = float(p('side_escape_distance').value)
         self._side_escape_ang = float(p('side_escape_angular_speed').value)
         self._side_escape_sec = float(p('side_escape_sec').value)
+        self._edge_escape_enabled = _as_bool(p('edge_escape_enabled').value)
+        self._edge_escape_front = max(0.0, float(p('edge_escape_front_distance').value))
+        self._edge_escape_clear = max(0.0, float(p('edge_escape_clearance').value))
+        self._edge_escape_ang = abs(float(p('edge_escape_angular_speed').value))
+        self._edge_escape_sec = max(0.0, float(p('edge_escape_sec').value))
+        self._edge_escape_max_attempts = max(1, int(p('edge_escape_max_attempts').value))
         self._dynamic_observe = float(p('dynamic_observe_distance').value)
 
         self._observe_frames = max(1, int(p('observe_frames').value))
         self._clear_observe_frames = max(1, int(p('clear_observe_frames').value))
+        self._front_release = max(self._clear, float(p('front_release_distance').value))
+        self._front_clear_exit_frames = max(1, int(p('front_clear_exit_frames').value))
         self._backup_sec = float(p('backup_sec').value)
         self._dodge_pivot_sec = max(0.0, float(p('dodge_pivot_sec').value))
         self._dodge_sec = math.radians(float(p('dodge_step_deg').value)) / max(abs(self._dodge_ang), 0.01)
@@ -170,6 +197,13 @@ class ObstacleAvoidanceNode(Node):
         self._min_battery = float(p('min_battery_voltage').value)
         self._warn_battery = float(p('warn_battery_voltage').value)
         self._battery_stale = float(p('battery_stale_sec').value)
+        self._contact_recovery_enabled = _as_bool(p('contact_recovery_enabled').value)
+        self._contact_cmd_speed_min = max(0.0, float(p('contact_cmd_speed_min').value))
+        self._contact_odom_speed_max = max(0.0, float(p('contact_odom_speed_max').value))
+        self._contact_odom_angular_max = max(0.0, float(p('contact_odom_angular_max').value))
+        self._contact_stall_sec = max(0.0, float(p('contact_stall_sec').value))
+        self._contact_cooldown_sec = max(0.0, float(p('contact_recovery_cooldown_sec').value))
+        self._contact_odom_stale_sec = max(0.05, float(p('contact_odom_stale_sec').value))
         self._debug = _as_bool(p('debug_decisions').value)
         self._debug_period = float(p('debug_period_sec').value)
         self._creep_speed = float(p('creep_speed').value)
@@ -181,7 +215,9 @@ class ObstacleAvoidanceNode(Node):
         self._state_end = 0.0
         self._turn_dir = 1.0
         self._observe_count = 0
+        self._front_clear_count = 0
         self._rotation_count = 0
+        self._edge_escape_count = 0
         self._raw_obs = None
         self._raw_obs_time = None
         self._battery_v = None
@@ -191,10 +227,17 @@ class ObstacleAvoidanceNode(Node):
         self._last_transition = None
         self._dynamic_first_seen: float | None = None  # monotonic time when dynamic first detected
         self._static_confirmed = False                 # True after observe_frames with obstacle
+        self._odom_linear = 0.0
+        self._odom_angular = 0.0
+        self._odom_time = None
+        self._motion_cmd_since = None
+        self._contact_pending = False
+        self._contact_cooldown_until = 0.0
 
         vel_type = TwistStamped if self._stamped else Twist
         self.create_subscription(String, obstacle_topic, self._on_obstacle, 10)
         self.create_subscription(BatteryState, battery_topic, self._on_battery, 10)
+        self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
         self._cmd_pub = self.create_publisher(vel_type, cmd_vel_topic, 10)
         self._state_pub = self.create_publisher(String, state_topic, 10)
         self.create_timer(1.0 / max(hz, 1.0), self._loop)
@@ -216,6 +259,8 @@ class ObstacleAvoidanceNode(Node):
             f'    clear_distance     : {_cm(self._clear)}  ← LIDAR/depth suspicious zone',
             f'    stop_distance      : {_cm(self._stop)}  static obstacle dodge trigger',
             f'    dodge_clearance    : {_cm(self._dodge_clear)}  dead-end side clearance',
+            f'    front_release      : {_cm(self._front_release)} after {self._front_clear_exit_frames} clear frames',
+            f'    edge_escape        : front<{_cm(self._edge_escape_front)} with side>{_cm(self._edge_escape_clear)}',
             f'    side_guard         : {_cm(self._side_guard)}  ← side scrape emergency',
             f'    side_escape        : {_cm(self._side_escape)}  ← side escape exit threshold',
             f'    rear_stop          : {_cm(self._rear_stop)}  ← blocks backup if rear blocked',
@@ -232,7 +277,10 @@ class ObstacleAvoidanceNode(Node):
             f'                         Only dodge when front ≤ {_cm(self._stop)} (stop_distance).',
             f'    DODGE              : Pivot {self._dodge_pivot_sec:.1f}s, then arc forward {self._dodge_forward:.3f} m/s',
             f'                         angular {self._dodge_ang:.2f} rad/s, step {math.degrees(self._dodge_ang * self._dodge_sec):.0f}° max.',
+            f'    EDGE_ESCAPE        : Pivot toward open side for {self._edge_escape_sec:.2f}s before backing up.',
             f'    BACKUP             : Reverse {self._backup_speed:.3f} m/s for {self._backup_sec:.2f}s then ROTATE.',
+            f'    CONTACT RECOVERY   : cmd>{self._contact_cmd_speed_min:.3f} m/s but odom<{self._contact_odom_speed_max:.3f} m/s',
+            f'                         for {self._contact_stall_sec:.2f}s -> BACKUP + ROTATE.',
             f'    ROTATE             : {math.degrees(self._rot_ang * self._rotate_sec):.0f}° per step, max {self._max_rotations} attempts.',
             sep,
             f'  [PRIORITY ORDER in each loop tick]',
@@ -248,7 +296,7 @@ class ObstacleAvoidanceNode(Node):
             f'    [NAV] state=OBSERVE reason=observe_start      → new obstacle, watching',
             f'    [NAV] state=OBSERVE reason=dynamic_wait       → dynamic object, waiting ≤{self._dynamic_timeout:.0f}s',
             f'    [NAV] state=OBSERVE reason=observe            → still counting frames',
-            f'    [NAV] state=OBSERVE reason=observe (creep)    → static confirmed, creeping to 15cm',
+            f'    [NAV] state=OBSERVE reason=observe (creep)    → static confirmed, creeping to {_cm(self._stop)}',
             f'    [NAV] state=DODGE   reason=dodge              → dodging to clearer side',
             f'    [NAV] state=BACKUP  reason=too_close_backup   → emergency backup',
             f'    [NAV] state=ROTATE  reason=rotate             → scanning for open heading',
@@ -272,6 +320,16 @@ class ObstacleAvoidanceNode(Node):
         if math.isfinite(msg.voltage) and msg.voltage > 0.0:
             self._battery_v = float(msg.voltage)
             self._battery_time = time.monotonic()
+
+    def _on_odom(self, msg: Odometry):
+        vx = float(msg.twist.twist.linear.x)
+        vy = float(msg.twist.twist.linear.y)
+        wz = float(msg.twist.twist.angular.z)
+        if math.isfinite(vx) and math.isfinite(vy):
+            self._odom_linear = math.hypot(vx, vy)
+        if math.isfinite(wz):
+            self._odom_angular = abs(wz)
+        self._odom_time = time.monotonic()
 
     # ---------------------------------------------------------------------
     # Main FSM
@@ -310,6 +368,15 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
+        if self._contact_pending and self._state not in (BACKUP, ROTATE, STOPPED):
+            self._contact_pending = False
+            self._motion_cmd_since = None
+            self._start_backup()
+            self._handle_backup(twist, snap, now)
+            self._log('contact_stall_backup', snap)
+            self._publish_cmd(twist)
+            return
+
         # Continue active manoeuvres first.
         if self._state == OBSERVE and self._handle_observe(twist, snap, front):
             self._log('observe', snap)
@@ -326,6 +393,11 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
+        if self._state == EDGE_ESCAPE and self._handle_edge_escape(twist, snap, now):
+            self._log('edge_escape', snap)
+            self._publish_cmd(twist)
+            return
+
         if self._state == BACKUP and self._handle_backup(twist, snap, now):
             self._log('backup', snap)
             self._publish_cmd(twist)
@@ -336,7 +408,16 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
-        # Priority 1: too close = backup, not dodge.
+        # Priority 1: near edge snag. If one side is clearly open, pivot out
+        # before falling back to backup. This handles wall lips / hanging cloth.
+        if self._edge_escape_needed(snap, front):
+            self._start_edge_escape(snap)
+            self._handle_edge_escape(twist, snap, now)
+            self._log('edge_escape_start', snap)
+            self._publish_cmd(twist)
+            return
+
+        # Priority 2: too close = backup, not dodge.
         if self._too_close(snap):
             self._start_backup()
             self._handle_backup(twist, snap, now)
@@ -344,7 +425,7 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
-        # Priority 2: true dead-end = backup then rotate.
+        # Priority 3: true dead-end = backup then rotate.
         if self._dead_end(snap, front):
             self._start_backup()
             self._handle_backup(twist, snap, now)
@@ -352,7 +433,7 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
-        # Priority 3: suspicious front object = observe first.
+        # Priority 4: suspicious front object = observe first.
         if self._front_suspicious(snap, front):
             self._start_observe()
             self._handle_observe(twist, snap, front)
@@ -360,7 +441,7 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
-        # Priority 4: side collision guard. This is not corridor centering;
+        # Priority 5: side collision guard. This is not corridor centering;
         # it only prevents scraping/hitting when the forward path is clear.
         if self._side_danger(snap):
             self._start_side_escape(snap)
@@ -383,6 +464,7 @@ class ObstacleAvoidanceNode(Node):
     def _start_observe(self):
         if self._state != OBSERVE:
             self._observe_count = 0
+            self._front_clear_count = 0
             self._static_confirmed = False
             self._set_state(OBSERVE)
 
@@ -391,16 +473,35 @@ class ObstacleAvoidanceNode(Node):
         now = time.monotonic()
 
         # Safety first: if too close regardless of observation state.
+        if self._edge_escape_needed(snap, front):
+            self._static_confirmed = False
+            self._start_edge_escape(snap)
+            return self._handle_edge_escape(twist, snap, now)
+
         if self._too_close(snap):
             self._static_confirmed = False
             self._start_backup()
             return True
 
-        # Object disappeared entirely → back to straight drive.
+        # Thin/low objects can disappear for one LIDAR frame; require a stable
+        # release distance before driving straight again.
         if not self._front_suspicious(snap, front):
-            self._static_confirmed = False
-            self._set_state(DRIVE)
-            return False
+            front_released = (not math.isfinite(front)) or front >= self._front_release
+            if front_released:
+                self._front_clear_count += 1
+            else:
+                self._front_clear_count = 0
+
+            if self._front_clear_count >= self._front_clear_exit_frames:
+                self._static_confirmed = False
+                self._set_state(DRIVE)
+                return False
+
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            return True
+
+        self._front_clear_count = 0
 
         # LIDAR suspicious but depth clearly open → short observe then drive.
         if self._depth_confirms_clear(snap) and self._observe_count >= self._clear_observe_frames:
@@ -453,6 +554,10 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DODGE, self._dodge_sec)
 
     def _handle_dodge(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
+        if self._edge_escape_needed(snap, front):
+            self._start_edge_escape(snap)
+            return self._handle_edge_escape(twist, snap, now)
+
         if self._too_close(snap):
             self._start_backup()
             return True
@@ -480,7 +585,9 @@ class ObstacleAvoidanceNode(Node):
         # from the new heading, OBSERVE will initiate another dodge step —
         # the robot keeps arcing until the obstacle is fully cleared.
         self._start_observe()
-        return False
+        twist.linear.x = 0.0
+        twist.angular.z = 0.0
+        return True
 
 
     def _start_side_escape(self, snap: Snap):
@@ -499,6 +606,11 @@ class ObstacleAvoidanceNode(Node):
 
     def _handle_side_escape(self, twist: Twist, snap: Snap, now: float) -> bool:
         # Hard front danger still has priority.
+        front = self._effective_front(snap)
+        if self._edge_escape_needed(snap, front):
+            self._start_edge_escape(snap)
+            return self._handle_edge_escape(twist, snap, now)
+
         if self._too_close(snap):
             self._start_backup()
             return True
@@ -519,8 +631,39 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DRIVE)
         return False
 
+    def _start_edge_escape(self, snap: Snap):
+        if self._state != EDGE_ESCAPE:
+            self._edge_escape_count += 1
+        self._turn_dir = self._clearer_side(snap.left, snap.right)
+        self._set_state(EDGE_ESCAPE, self._edge_escape_sec)
+
+    def _handle_edge_escape(self, twist: Twist, snap: Snap, now: float) -> bool:
+        if now < self._state_end:
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_dir * self._edge_escape_ang
+            return True
+
+        front = self._effective_front(snap)
+        if self._edge_escape_needed(snap, front):
+            if self._edge_escape_count >= self._edge_escape_max_attempts:
+                self._start_backup()
+                return True
+            self._start_edge_escape(snap)
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_dir * self._edge_escape_ang
+            return True
+
+        self._edge_escape_count = 0
+        self._start_observe()
+        twist.linear.x = 0.0
+        twist.angular.z = 0.0
+        return True
+
     def _start_backup(self):
         self._rotation_count = 0
+        self._edge_escape_count = 0
+        self._motion_cmd_since = None
+        self._contact_pending = False
         self._set_state(BACKUP, self._backup_sec)
 
     def _handle_backup(self, twist: Twist, snap: Snap, now: float) -> bool:
@@ -538,6 +681,10 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(ROTATE, self._rotate_sec)
 
     def _handle_rotate(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
+        if self._edge_escape_needed(snap, front):
+            self._start_edge_escape(snap)
+            return self._handle_edge_escape(twist, snap, now)
+
         if self._too_close(snap):
             self._start_backup()
             return True
@@ -635,6 +782,31 @@ class ObstacleAvoidanceNode(Node):
         right_close = math.isfinite(snap.right) and snap.right < self._side_guard
         return left_close or right_close
 
+    def _edge_escape_needed(self, snap: Snap, front: float) -> bool:
+        if not self._edge_escape_enabled:
+            return False
+        if self._edge_escape_count >= self._edge_escape_max_attempts:
+            return False
+        if not math.isfinite(front) or front > self._edge_escape_front:
+            return False
+
+        left_clear = snap.left if math.isfinite(snap.left) else math.inf
+        right_clear = snap.right if math.isfinite(snap.right) else math.inf
+        open_side = max(left_clear, right_clear)
+        tight_side = min(left_clear, right_clear)
+
+        if open_side < self._edge_escape_clear:
+            return False
+
+        # If the object is already in the hard-backup zone, only pivot when a
+        # side is also tight. A centered near obstacle should still back up.
+        if front <= self._hard_backup:
+            return tight_side <= self._side_escape
+
+        # For the softer 10-15 cm snag zone, allow a strongly asymmetric side
+        # reading to pivot out of wall lips / hanging cloth.
+        return tight_side <= self._side_escape or (open_side - tight_side) >= self._edge_escape_clear
+
     def _dead_end(self, snap: Snap, front: float) -> bool:
         front_blocked = front <= self._clear and not self._depth_confirms_clear(snap)
         left_blocked = math.isfinite(snap.left) and snap.left < self._dodge_clear
@@ -681,6 +853,8 @@ class ObstacleAvoidanceNode(Node):
 
     def _set_state(self, state: str, duration: float = 0.0):
         now = time.monotonic()
+        if state == DRIVE:
+            self._edge_escape_count = 0
         if self._state != state:
             old = self._state
             self._state = state
@@ -692,7 +866,47 @@ class ObstacleAvoidanceNode(Node):
             self._state_pub.publish(msg)
         self._state_end = now + max(0.0, duration)
 
+    def _track_contact_stall(self, twist: Twist):
+        if not self._contact_recovery_enabled:
+            return
+
+        now = time.monotonic()
+        if self._state in (BACKUP, ROTATE, SIDE_ESCAPE, STOPPED) or now < self._contact_cooldown_until:
+            self._motion_cmd_since = None
+            return
+
+        if self._odom_time is None or now - self._odom_time > self._contact_odom_stale_sec:
+            self._motion_cmd_since = None
+            return
+
+        forward_cmd = twist.linear.x >= self._contact_cmd_speed_min
+        if not forward_cmd:
+            self._motion_cmd_since = None
+            return
+
+        odom_stalled = (
+            self._odom_linear <= self._contact_odom_speed_max
+            and self._odom_angular <= self._contact_odom_angular_max
+        )
+        if not odom_stalled:
+            self._motion_cmd_since = None
+            return
+
+        if self._motion_cmd_since is None:
+            self._motion_cmd_since = now
+            return
+
+        if now - self._motion_cmd_since >= self._contact_stall_sec:
+            self._contact_pending = True
+            self._contact_cooldown_until = now + self._contact_cooldown_sec
+            self._motion_cmd_since = None
+            self.get_logger().warn(
+                '[CONTACT] cmd forward but odom is near zero; backing up next tick'
+            )
+
     def _publish_cmd(self, twist: Twist):
+        self._track_contact_stall(twist)
+
         if not self._stamped:
             self._cmd_pub.publish(twist)
             return
@@ -722,7 +936,7 @@ class ObstacleAvoidanceNode(Node):
         if snap.dynamic and self._dynamic_first_seen is not None:
             dyn_elapsed = f' dyn_elapsed={time.monotonic() - self._dynamic_first_seen:.1f}s'
         creep_info = (
-            ' [CREEP→15cm]'
+            f' [CREEP->{_cm(self._stop)}]'
             if (self._state == OBSERVE and self._static_confirmed
                 and snap is not None and not snap.dynamic and front > self._stop)
             else ''
@@ -736,7 +950,7 @@ class ObstacleAvoidanceNode(Node):
             f'dynamic={snap.dynamic}{dyn_elapsed} turn={"L" if self._turn_dir > 0 else "R"} '
             f'obs={self._observe_count}'
         )
-        if self._state in (OBSERVE, DODGE, SIDE_ESCAPE, BACKUP, ROTATE):
+        if self._state in (OBSERVE, DODGE, SIDE_ESCAPE, EDGE_ESCAPE, BACKUP, ROTATE):
             self.get_logger().warn(line)
         else:
             self.get_logger().info(line)
