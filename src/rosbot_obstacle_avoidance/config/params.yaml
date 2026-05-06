@@ -97,17 +97,22 @@ obstacle_avoidance:
     backup_sec: 0.70
 
     # Main thresholds
-    clear_distance: 0.35
-    stop_distance: 0.15
-    dodge_clearance: 0.25
+    clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
+    stop_distance: 0.15        # too-close threshold → BACKUP; also dodge trigger after static confirm
+    dodge_clearance: 0.25      # min side clearance for dodge (not dead-end)
     rear_stop_distance: 0.20
     side_guard_distance: 0.07
     side_escape_distance: 0.12
     side_escape_angular_speed: 0.22
     side_escape_sec: 0.45
     dynamic_observe_distance: 0.80
-    observe_frames: 8
+    observe_frames: 8          # frames to confirm obstacle before classify static/dynamic
     clear_observe_frames: 3
+
+    # Static approach + dynamic timeout
+    creep_speed: 0.03          # m/s approach speed after static confirmed (to reach 15 cm then dodge)
+    dynamic_timeout_sec: 5.0   # seconds to wait for dynamic object to clear before treating as static
+    dynamic_close_distance: 0.20  # sudden dynamic appearance threshold (within 20 cm)
 
     # Keep false battery stop off during lab testing unless your battery topic is reliable.
     require_battery_ok: false

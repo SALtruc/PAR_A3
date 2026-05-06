@@ -107,6 +107,11 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('rotation_step_deg', 70.0)
         self.declare_parameter('max_rotation_attempts', 3)
 
+        # Static approach + dynamic timeout
+        self.declare_parameter('creep_speed', 0.03)
+        self.declare_parameter('dynamic_timeout_sec', 5.0)
+        self.declare_parameter('dynamic_close_distance', 0.20)
+
         # Battery / debug
         self.declare_parameter('require_battery_ok', False)
         self.declare_parameter('min_battery_voltage', 8.5)
@@ -155,6 +160,9 @@ class ObstacleAvoidanceNode(Node):
         self._battery_stale = float(p('battery_stale_sec').value)
         self._debug = _as_bool(p('debug_decisions').value)
         self._debug_period = float(p('debug_period_sec').value)
+        self._creep_speed = float(p('creep_speed').value)
+        self._dynamic_timeout = float(p('dynamic_timeout_sec').value)
+        self._dynamic_close = float(p('dynamic_close_distance').value)
 
         self._state = STOPPED
         self._state_end = 0.0
@@ -168,6 +176,8 @@ class ObstacleAvoidanceNode(Node):
         self._last_battery_log = 0.0
         self._last_debug_log = 0.0
         self._last_transition = None
+        self._dynamic_first_seen: float | None = None  # monotonic time when dynamic first detected
+        self._static_confirmed = False                 # True after observe_frames with obstacle
 
         vel_type = TwistStamped if self._stamped else Twist
         self.create_subscription(String, obstacle_topic, self._on_obstacle, 10)
@@ -176,12 +186,62 @@ class ObstacleAvoidanceNode(Node):
         self._state_pub = self.create_publisher(String, state_topic, 10)
         self.create_timer(1.0 / max(hz, 1.0), self._loop)
 
-        self.get_logger().info(
-            f'Refined obstacle avoidance ready: clear={_cm(self._clear)} '
-            f'stop={_cm(self._stop)} observe={self._observe_frames} '
-            f'dodge_step={float(p("dodge_step_deg").value):.0f}deg '
-            f'rotate_step={float(p("rotation_step_deg").value):.0f}deg'
-        )
+        self._print_detection_summary()
+
+    # ---------------------------------------------------------------------
+    # Startup detection summary
+    # ---------------------------------------------------------------------
+
+    def _print_detection_summary(self):
+        sep = '=' * 60
+        lines = [
+            sep,
+            'OBSTACLE AVOIDANCE - DETECTION POLICY SUMMARY',
+            sep,
+            f'  [THRESHOLDS]',
+            f'    clear_distance     : {_cm(self._clear)}  ← LIDAR/depth suspicious zone',
+            f'    stop_distance      : {_cm(self._stop)}  ← too-close backup trigger & dodge trigger',
+            f'    dodge_clearance    : {_cm(self._dodge_clear)}  ← min side clearance to dodge (not dead-end)',
+            f'    side_guard         : {_cm(self._side_guard)}  ← side scrape emergency',
+            f'    side_escape        : {_cm(self._side_escape)}  ← side escape exit threshold',
+            f'    rear_stop          : {_cm(self._rear_stop)}  ← blocks backup if rear blocked',
+            f'    dynamic_observe    : {_cm(self._dynamic_observe)}  ← distance to trigger dynamic observe',
+            f'    dynamic_close      : {_cm(self._dynamic_close)}  ← sudden dynamic appearance threshold',
+            sep,
+            f'  [BEHAVIOUR PHASES]',
+            f'    Phase 1 – OBSERVE  : Stop (speed={self._observe_speed:.3f} m/s) for {self._observe_frames} frames.',
+            f'                         If object clears → DRIVE straight.',
+            f'                         Depth-confirms-clear after {self._clear_observe_frames} frames → DRIVE.',
+            f'    Phase 2A – DYNAMIC : If dynamic detected hold 0 m/s up to {self._dynamic_timeout:.1f}s.',
+            f'                         Object gone → DRIVE. Timed-out → treat as static.',
+            f'    Phase 2B – STATIC  : Creep at {self._creep_speed:.3f} m/s toward obstacle.',
+            f'                         Only dodge when front ≤ {_cm(self._stop)} (stop_distance).',
+            f'    DODGE              : Turn toward clearer side, forward {self._dodge_forward:.3f} m/s',
+            f'                         angular {self._dodge_ang:.2f} rad/s, step {math.degrees(self._dodge_ang * self._dodge_sec):.0f}° max.',
+            f'    BACKUP             : Reverse {self._backup_speed:.3f} m/s for {self._backup_sec:.2f}s then ROTATE.',
+            f'    ROTATE             : {math.degrees(self._rot_ang * self._rotate_sec):.0f}° per step, max {self._max_rotations} attempts.',
+            sep,
+            f'  [PRIORITY ORDER in each loop tick]',
+            f'    0. ToF emergency         → STOP',
+            f'    1. Side scrape <{_cm(self._side_guard)} → SIDE_ESCAPE (rotate away)',
+            f'    2. Front <{_cm(self._stop)}            → BACKUP immediately',
+            f'    3. Dead-end              → BACKUP + ROTATE',
+            f'    4. Front ≤{_cm(self._clear)}           → OBSERVE (stop & watch)',
+            f'    5. Default               → DRIVE straight, no corridor centering',
+            sep,
+            f'  [LOG LEGEND]',
+            f'    [NAV] state=DRIVE reason=drive_straight       → going straight, all clear',
+            f'    [NAV] state=OBSERVE reason=observe_start      → new obstacle, watching',
+            f'    [NAV] state=OBSERVE reason=dynamic_wait       → dynamic object, waiting ≤{self._dynamic_timeout:.0f}s',
+            f'    [NAV] state=OBSERVE reason=observe            → still counting frames',
+            f'    [NAV] state=OBSERVE reason=observe (creep)    → static confirmed, creeping to 15cm',
+            f'    [NAV] state=DODGE   reason=dodge              → dodging to clearer side',
+            f'    [NAV] state=BACKUP  reason=too_close_backup   → emergency backup',
+            f'    [NAV] state=ROTATE  reason=rotate             → scanning for open heading',
+            sep,
+        ]
+        for line in lines:
+            self.get_logger().info(line)
 
     # ---------------------------------------------------------------------
     # Subscribers
@@ -222,6 +282,13 @@ class ObstacleAvoidanceNode(Node):
 
         snap = self._snap()
         front = self._effective_front(snap)
+
+        # Track when dynamic obstacle was first seen (reset when gone).
+        if snap.dynamic:
+            if self._dynamic_first_seen is None:
+                self._dynamic_first_seen = now
+        else:
+            self._dynamic_first_seen = None
 
         if snap.tof_emergency:
             self._set_state(STOPPED)
@@ -302,38 +369,68 @@ class ObstacleAvoidanceNode(Node):
     def _start_observe(self):
         if self._state != OBSERVE:
             self._observe_count = 0
+            self._static_confirmed = False
             self._set_state(OBSERVE)
 
     def _handle_observe(self, twist: Twist, snap: Snap, front: float) -> bool:
         self._observe_count += 1
+        now = time.monotonic()
 
+        # Safety first: if too close regardless of observation state.
         if self._too_close(snap):
+            self._static_confirmed = False
             self._start_backup()
             return True
 
-        # Object disappeared.
+        # Object disappeared entirely → back to straight drive.
         if not self._front_suspicious(snap, front):
+            self._static_confirmed = False
             self._set_state(DRIVE)
             return False
 
-        # LIDAR is suspicious but depth sees a clear path: observe a few frames,
-        # then continue straight instead of rotating immediately.
-        if (
-                self._depth_confirms_clear(snap)
-                and self._observe_count >= self._clear_observe_frames):
+        # LIDAR suspicious but depth clearly open → short observe then drive.
+        if self._depth_confirms_clear(snap) and self._observe_count >= self._clear_observe_frames:
+            self._static_confirmed = False
             self._set_state(DRIVE)
             return False
 
+        # Phase 1: still collecting observation frames → stop and watch.
         if self._observe_count < self._observe_frames:
             twist.linear.x = self._observe_speed
             twist.angular.z = 0.0
             return True
 
-        # Still blocked after observation.
+        # Phase 2: obstacle confirmed after observe_frames.
+        self._static_confirmed = True
+
+        # Dynamic object handling: hold position and wait up to dynamic_timeout_sec.
+        # If the dynamic flag clears (person moved away), the top check exits first.
+        if snap.dynamic and self._dynamic_first_seen is not None:
+            elapsed = now - self._dynamic_first_seen
+            if front > self._stop and elapsed < self._dynamic_timeout:
+                # Dynamic object still near but not dangerously close: hold still.
+                self._log('dynamic_wait', snap)
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+                return True
+            # Dynamic timed out (>5s) OR entered stop zone → treat as static blocker.
+
+        # Static confirmed (or dynamic timed out/too close).
+        # Dead-end check first.
         if self._dead_end(snap, front):
+            self._static_confirmed = False
             self._start_backup()
             return True
 
+        # If still outside stop_distance, creep forward slowly.
+        # Robot approached to 15 cm then dodge — do not dodge from far away.
+        if front > self._stop:
+            twist.linear.x = self._creep_speed
+            twist.angular.z = 0.0
+            return True
+
+        # At stop_distance: initiate dodge toward the clearer side.
+        self._static_confirmed = False
         self._start_dodge(snap)
         return True
 
@@ -584,13 +681,22 @@ class ObstacleAvoidanceNode(Node):
             return
 
         front = self._effective_front(snap)
+        dyn_elapsed = ''
+        if snap.dynamic and self._dynamic_first_seen is not None:
+            dyn_elapsed = f' dyn_elapsed={time.monotonic() - self._dynamic_first_seen:.1f}s'
+        creep_info = (
+            ' [CREEP→15cm]'
+            if (self._state == OBSERVE and self._static_confirmed
+                and snap is not None and not snap.dynamic and front > self._stop)
+            else ''
+        )
         line = (
-            f'[NAV] state={self._state} reason={reason} '
+            f'[NAV] state={self._state} reason={reason}{creep_info} '
             f'front_lidar={_cm(snap.front_lidar)} '
             f'front_depth={_cm(snap.front_depth)} '
             f'front_eff={_cm(front)} '
             f'left={_cm(snap.left)} right={_cm(snap.right)} rear={_cm(snap.rear)} '
-            f'dynamic={snap.dynamic} turn={"L" if self._turn_dir > 0 else "R"} '
+            f'dynamic={snap.dynamic}{dyn_elapsed} turn={"L" if self._turn_dir > 0 else "R"} '
             f'obs={self._observe_count}'
         )
         if self._state in (OBSERVE, DODGE, SIDE_ESCAPE, BACKUP, ROTATE):
