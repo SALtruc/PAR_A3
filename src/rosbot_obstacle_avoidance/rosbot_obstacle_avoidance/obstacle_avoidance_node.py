@@ -99,7 +99,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.12)
+        self.declare_parameter('max_speed', 0.24)
         self.declare_parameter('observe_speed', 0.0)
         self.declare_parameter('dodge_forward_speed', 0.045)
         self.declare_parameter('dodge_angular_speed', 0.45)
@@ -153,7 +153,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('contact_cmd_speed_min', 0.025)
         self.declare_parameter('contact_odom_speed_max', 0.012)
         self.declare_parameter('contact_odom_angular_max', 0.08)
-        self.declare_parameter('contact_stall_sec', 0.55)
+        self.declare_parameter('contact_stall_sec', 5.0)
         self.declare_parameter('contact_recovery_cooldown_sec', 1.8)
         self.declare_parameter('contact_odom_stale_sec', 0.5)
         self.declare_parameter('tilt_recovery_enabled', True)
@@ -1012,7 +1012,8 @@ class ObstacleAvoidanceNode(Node):
             self._contact_cooldown_until = now + self._contact_cooldown_sec
             self._motion_cmd_since = None
             self.get_logger().warn(
-                '[CONTACT] cmd forward but odom is near zero; backing up next tick'
+                f'[CONTACT] cmd forward but odom is near zero for '
+                f'{self._contact_stall_sec:.1f}s; backing up next tick'
             )
 
     def _imu_recent(self, now: float) -> bool:

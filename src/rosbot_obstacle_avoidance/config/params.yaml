@@ -88,7 +88,7 @@ obstacle_avoidance:
     control_hz: 20.0
 
     # Default movement
-    max_speed: 0.12
+    max_speed: 0.24
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
@@ -145,7 +145,7 @@ obstacle_avoidance:
     contact_cmd_speed_min: 0.025
     contact_odom_speed_max: 0.012
     contact_odom_angular_max: 0.08
-    contact_stall_sec: 0.55
+    contact_stall_sec: 5.0
     contact_recovery_cooldown_sec: 1.8
     contact_odom_stale_sec: 0.5
 

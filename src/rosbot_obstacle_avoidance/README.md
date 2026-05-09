@@ -123,7 +123,7 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `max_speed` | `0.10` | Roaming speed in clear space |
+| `max_speed` | `0.24` | Roaming speed in clear space |
 | `clear_distance` | `0.35` | Front path distance treated as clear |
 | `stop_distance` | `0.15` | Back up immediately under this front distance |
 | `dodge_clearance` | `0.25` | Side clearance needed to avoid calling a dead end |
@@ -152,6 +152,7 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
 | `side_guard_distance` | `0.07` | Only this close triggers side escape |
 | `side_escape_distance` | `0.12` | Side clearance needed to leave side escape |
+| `contact_stall_sec` | `5.0` | Forward command plus near-zero odom for this long triggers backup then rotate |
 | `require_battery_ok` | `true` | Requires a fresh battery reading before motion |
 | `min_battery_voltage` | `11.1` | Holds zero velocity below this pack voltage |
 | `warn_battery_voltage` | `11.4` | Logs a low-battery warning but still allows motion |
