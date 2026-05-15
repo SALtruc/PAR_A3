@@ -750,11 +750,16 @@ class ObstacleAvoidanceNode(Node):
         self._contact_pending = False
         self._set_state(BACKUP, self._backup_sec)
 
-    def _handle_backup(self, twist: Twist, snap: Snap, now: float) -> bool:
+    def _handle_backup(self, twist: Twist, snap: Snap, now: float, front: float) -> bool:
         rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
         if now < self._state_end and not rear_blocked:
             twist.linear.x = -abs(self._backup_speed)
             twist.angular.z = 0.0
+            return True
+        
+        if not now < self._state_end and self._dead_end(snap, front):
+            # Expire if still in dead-end situation
+            self._state_end = now + max(0.0, self._backup_sec)
             return True
 
         self._start_rotate(snap)
@@ -770,8 +775,10 @@ class ObstacleAvoidanceNode(Node):
             return self._handle_edge_escape(twist, snap, now)
 
         if self._too_close(snap):
-            self._start_backup()
-            return True
+            rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
+            if rear_blocked:
+                self._set_state(STOPPED)   # truly trapped, wait
+                return False
 
         if front > self._clear or self._depth_confirms_clear(snap):
             self._set_state(DRIVE)
