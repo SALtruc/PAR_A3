@@ -756,11 +756,6 @@ class ObstacleAvoidanceNode(Node):
             twist.linear.x = -abs(self._backup_speed)
             twist.angular.z = 0.0
             return True
-        
-        if not now < self._state_end and self._dead_end(snap, front):
-            # Expire if still in dead-end situation
-            self._state_end = now + max(0.0, self._backup_sec)
-            return True
 
         self._start_rotate(snap)
         return True
