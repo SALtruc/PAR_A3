@@ -113,7 +113,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('front_tof_obstacle_distance', 0.30)
         self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('dodge_clearance', 0.03)
-        self.declare_parameter('rear_stop_distance', 0.20)
+        self.declare_parameter('rear_stop_distance', 0.12)  # Based on chassis self-reflection = 0.15m => rear_stop_distance should be lower
         self.declare_parameter('side_guard_distance', 0.03)
         self.declare_parameter('side_escape_distance', 0.05)
         self.declare_parameter('side_escape_angular_speed', 0.30)
@@ -931,20 +931,47 @@ class ObstacleAvoidanceNode(Node):
         depth_ok = bool(depth.get('available', False))
         emergency = bool(fused.get('emergency', False))
         tof_emergency = bool(emergency and 'tof' in source)
+        
+        # Fix mirrored
+        # Based on what are observed
+        # -> Right and left are physically swapped
+        # -> front_close_count and front_close_ratio affect to all sides
+        front_control_raw = _finite(lidar.get('front_control', fused.get('front_distance')))
+        front_close_count = int(lidar.get('front_close_count', 0))
+        front_close_ratio = float(lidar.get('front_close_ratio', 0.0))
+        
+        if front_close_ratio > 1.0:
+            # Rear / side are being counted in the front sector
+            # front_close_ration > 1.0 -> not real front
+            front_lidar = math.inf
+        elif front_close_count == 0 and front_control_raw < 0.15:
+            # Low reading but zero close rays — side bleed noise
+            front_lidar = math.inf
+        else:
+            front_lidar = front_control_raw
 
+        # Swap left and right
+        left  = _finite(fused.get('right_distance'))
+        right = _finite(fused.get('left_distance'))
+
+        # rear_distance can include chassis self-reflection at 15–16cm
+        rear = _finite(lidar.get('rear_mean',
+                    fused.get('rear_distance')))
+        
         return Snap(
-            front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
-            front_depth=_finite(depth.get('front_min')),
-            front_tof=self._front_tof_distance(tof),
-            left=_finite(fused.get('left_distance')),
-            right=_finite(fused.get('right_distance')),
-            rear=_finite(fused.get('rear_distance')),
-            dynamic=bool(fused.get('dynamic_obstacle', False) or depth.get('motion', False)),
-            emergency=emergency,
-            tof_emergency=tof_emergency,
-            lidar_ok=lidar_ok,
-            depth_ok=depth_ok,
-        )
+        front_lidar  = front_lidar,
+        front_depth  = _finite(depth.get('front_min')),
+        front_tof    = self._front_tof_distance(tof),
+        left         = left,
+        right        = right,
+        rear         = rear,
+        dynamic      = bool(fused.get('dynamic_obstacle', False)
+                            or depth.get('motion', False)),
+        emergency    = emergency,
+        tof_emergency = tof_emergency,
+        lidar_ok     = lidar_ok,
+        depth_ok     = depth_ok,
+    )
 
     def _front_tof_distance(self, tof: dict) -> float:
         topics = tof.get('topics', {}) if isinstance(tof, dict) else {}
