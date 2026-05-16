@@ -135,7 +135,7 @@ if [ "$missing" -ne 0 ] && {
   echo
   echo "        Diagnose missing ToF with:"
   echo "        ros2 topic list | sort | grep -E 'range|tof|vl53|distance'"
-  echo "        snap logs rosbot -n 100"
+  echo "        sudo snap logs rosbot -n 100"
   exit 6
 fi
 

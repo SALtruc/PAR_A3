@@ -53,11 +53,20 @@ wait_for_full_fusion() {
       echo "[error] Full-fusion topics did not become ready."
       echo "        Last check output was saved at: $check_log"
       echo
+      echo "[diag] Snap service status:"
+      snap services 2>/dev/null | grep -E 'rosbot|rplidar|depthai|micro|agent' || true
+      echo
       echo "[diag] Current range/ToF-like topics:"
       ros2 topic list 2>/dev/null | sort | grep -E 'range|tof|vl53|distance' || true
       echo
+      echo "[diag] Current robot topics:"
+      ros2 topic list 2>/dev/null | sort | grep -E 'scan|range|tof|vl53|odom|imu|battery|cmd_vel|motor|button|led' || true
+      echo
       echo "[diag] Recent rosbot snap logs:"
-      snap logs rosbot -n 80 || true
+      sudo snap logs rosbot -n 120 || true
+      echo
+      echo "[hint] If no /range/* topics appear above, the ROSbot firmware/snap is not publishing ToF."
+      echo "       Project C cannot force full-fusion mode until those topics exist."
       return 1
     fi
   done
