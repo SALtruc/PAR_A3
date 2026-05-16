@@ -138,12 +138,12 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `max_speed` | `0.24` | Roaming speed in clear space |
 | `clear_distance` | `0.35` | Front path distance treated as clear |
 | `stop_distance` | `0.15` | Back up immediately under this front distance |
-| `dodge_clearance` | `0.25` | Side clearance needed to avoid calling a dead end |
+| `dodge_clearance` | `0.015` | Side clearance needed to avoid calling a dead end |
 | `observe_frames` | `8` | Frames to observe before dodging |
 | `clear_observe_frames` | `3` | Frames to verify LIDAR/depth disagreement before driving straight |
 | `dodge_step_deg` | `30.0` | Gentle dodge limit; keeps dynamic avoidance below 45 degrees |
 | `robot_half_width_m` | `0.13` | Half-width of the ROSbot body plus a small margin for side clearance |
-| `front_path_half_width_m` | `0.18` | LIDAR path corridor checked in front of the full robot width |
+| `front_path_half_width_m` | `0.14` | LIDAR path corridor checked in front of the full robot width |
 | `side_guard_forward_m` | `0.35` | Forward extent of side-edge collision checking |
 | `side_guard_rear_m` | `0.20` | Rear extent of side-edge collision checking |
 | `side_percentile` | `10.0` | Robust percentile used for side-edge clearance |
@@ -162,8 +162,8 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `obstacle_hold_sec` | `0.15` | Keeps obstacle detection latched across brief noisy clear frames |
 | `clear_confirm_sec` | `0.10` | Requires a stable clear front sector before leaving obstacle mode |
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
-| `side_guard_distance` | `0.07` | Only this close triggers side escape |
-| `side_escape_distance` | `0.12` | Side clearance needed to leave side escape |
+| `side_guard_distance` | `0.015` | Only this close triggers side escape |
+| `side_escape_distance` | `0.03` | Side clearance needed to leave side escape |
 | `contact_stall_sec` | `5.0` | Forward command plus near-zero odom for this long triggers backup then rotate |
 | `require_battery_ok` | `true` | Requires a fresh battery reading before motion |
 | `min_battery_voltage` | `11.1` | Holds zero velocity below this pack voltage |

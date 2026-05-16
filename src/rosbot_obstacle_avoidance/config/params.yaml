@@ -24,7 +24,7 @@ obstacle_perception:
     front_angle_deg: 28.0
     front_percentile: 5.0
     robot_half_width_m: 0.13
-    front_path_half_width_m: 0.16
+    front_path_half_width_m: 0.14
     side_guard_forward_m: 0.35
     side_guard_rear_m: 0.20
     side_percentile: 10.0
@@ -110,15 +110,15 @@ obstacle_avoidance:
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
     front_tof_obstacle_distance: 0.30
     front_tof_hard_distance: 0.12
-    dodge_clearance: 0.03      # min side clearance for dead-end; robot half-width + 3 cm corridor
+    dodge_clearance: 0.015     # min side clearance for dead-end; narrow-passage profile
     rear_stop_distance: 0.20
-    side_guard_distance: 0.03
-    side_escape_distance: 0.05
+    side_guard_distance: 0.015
+    side_escape_distance: 0.03
     side_escape_angular_speed: 0.30
     side_escape_sec: 0.45
     edge_escape_enabled: true
     edge_escape_front_distance: 0.15
-    edge_escape_clearance: 0.30
+    edge_escape_clearance: 0.20
     edge_escape_angular_speed: 0.45
     edge_escape_sec: 0.80
     edge_escape_max_attempts: 3
