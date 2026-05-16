@@ -51,7 +51,7 @@ obstacle_perception:
     pointcloud_side_min_abs_m: 0.15
     pointcloud_side_max_abs_m: 0.75
     pointcloud_vertical_abs_m: 0.75
-    pointcloud_low_min_height_m: -0.45
+    pointcloud_low_min_height_m: -0.90
     pointcloud_low_max_height_m: 0.70
     pointcloud_low_center_half_width_m: 0.32
     pointcloud_low_min_points: 1
@@ -107,7 +107,7 @@ obstacle_avoidance:
     rotation_commit_sec: 0.65
     max_rotation_attempts: 3
     backup_speed: 0.08
-    backup_sec: 1.20
+    backup_sec: 1.60
 
     # Main thresholds
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)

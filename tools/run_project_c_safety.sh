@@ -72,5 +72,6 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
   max_speed:="${MAX_SPEED:-0.10}" \
   backup_speed:="${BACKUP_SPEED:-0.04}" \
+  backup_sec:="${BACKUP_SEC:-1.60}" \
   require_battery_ok:="${REQUIRE_BATTERY_OK:-false}" \
   "$@"

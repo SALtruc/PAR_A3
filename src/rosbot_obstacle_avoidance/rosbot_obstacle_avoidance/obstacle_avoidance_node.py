@@ -72,6 +72,8 @@ class Snap:
     front_depth: float
     front_oak_low: float
     front_oak_low_count: int
+    front_oak_sample_count: int
+    front_oak_fallback_count: int
     front_tof: float
     left: float
     right: float
@@ -133,7 +135,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_observe_frames', 3)
         self.declare_parameter('front_release_distance', 0.45)
         self.declare_parameter('front_clear_exit_frames', 5)
-        self.declare_parameter('backup_sec', 1.20)
+        self.declare_parameter('backup_sec', 1.60)
         self.declare_parameter('dodge_step_deg', 60.0)
         self.declare_parameter('dodge_pivot_sec', 0.60)
         self.declare_parameter('rotation_step_deg', 95.0)
@@ -966,6 +968,10 @@ class ObstacleAvoidanceNode(Node):
             front_depth=_finite(depth.get('front_min')),
             front_oak_low=_finite(depth.get('pointcloud_low_front_min')),
             front_oak_low_count=int(depth.get('pointcloud_low_front_count', 0) or 0),
+            front_oak_sample_count=int(depth.get('pointcloud_sample_count', 0) or 0),
+            front_oak_fallback_count=int(
+                depth.get('pointcloud_low_fallback_count', 0) or 0
+            ),
             front_tof=self._front_tof_distance(tof),
             left=_finite(fused.get('left_distance')),
             right=_finite(fused.get('right_distance')),
@@ -1164,7 +1170,8 @@ class ObstacleAvoidanceNode(Node):
             f'front={_cm(front)} left={_cm(snap.left)} '
             f'right={_cm(snap.right)} rear={_cm(snap.rear)} | '
             f'oak_low={oak_low_status} dist={_cm(snap.front_oak_low)} '
-            f'pts={snap.front_oak_low_count} lidar_miss={lidar_miss} | '
+            f'pts={snap.front_oak_low_count} pc={snap.front_oak_sample_count} '
+            f'fallback={snap.front_oak_fallback_count} lidar_miss={lidar_miss} | '
             f'dynamic={"YES" if snap.dynamic else "NO"}{dyn_elapsed}{tilt_info} '
             f'turn={"L" if self._turn_dir > 0 else "R"} obs={self._observe_count}'
         )
