@@ -51,6 +51,10 @@ obstacle_perception:
     pointcloud_side_min_abs_m: 0.15
     pointcloud_side_max_abs_m: 0.75
     pointcloud_vertical_abs_m: 0.75
+    pointcloud_low_min_height_m: 0.03
+    pointcloud_low_max_height_m: 0.60
+    pointcloud_low_center_half_width_m: 0.22
+    pointcloud_low_min_points: 3
     pointcloud_min_forward_m: 0.08
     pointcloud_max_forward_m: 4.00
     pointcloud_sample_step: 3

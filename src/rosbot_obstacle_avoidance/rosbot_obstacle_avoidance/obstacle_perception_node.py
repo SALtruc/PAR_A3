@@ -121,6 +121,10 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('pointcloud_side_min_abs_m', 0.15)
         self.declare_parameter('pointcloud_side_max_abs_m', 0.75)
         self.declare_parameter('pointcloud_vertical_abs_m', 0.75)
+        self.declare_parameter('pointcloud_low_min_height_m', 0.03)
+        self.declare_parameter('pointcloud_low_max_height_m', 0.60)
+        self.declare_parameter('pointcloud_low_center_half_width_m', 0.22)
+        self.declare_parameter('pointcloud_low_min_points', 3)
         self.declare_parameter('pointcloud_min_forward_m', 0.08)
         self.declare_parameter('pointcloud_max_forward_m', 4.00)
         self.declare_parameter('pointcloud_sample_step', 3)
@@ -259,6 +263,20 @@ class ObstaclePerceptionNode(Node):
         self._pointcloud_vertical_abs_m = float(
             self.get_parameter('pointcloud_vertical_abs_m').value
         )
+        self._pointcloud_low_min_height_m = float(
+            self.get_parameter('pointcloud_low_min_height_m').value
+        )
+        self._pointcloud_low_max_height_m = float(
+            self.get_parameter('pointcloud_low_max_height_m').value
+        )
+        self._pointcloud_low_center_half_width_m = max(
+            0.0,
+            float(self.get_parameter('pointcloud_low_center_half_width_m').value),
+        )
+        self._pointcloud_low_min_points = max(
+            1,
+            int(self.get_parameter('pointcloud_low_min_points').value),
+        )
         self._pointcloud_min_forward_m = float(
             self.get_parameter('pointcloud_min_forward_m').value
         )
@@ -336,6 +354,8 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_front = math.inf
         self._depth_motion_count = 0
         self._pointcloud_front = math.inf
+        self._pointcloud_low_front = math.inf
+        self._pointcloud_low_front_count = 0
         self._pointcloud_left = math.inf
         self._pointcloud_right = math.inf
         self._last_pointcloud_time: float | None = None
@@ -497,6 +517,7 @@ class ObstaclePerceptionNode(Node):
         self._last_pointcloud_process_time = now
 
         front_vals: list[float] = []
+        low_front_vals: list[float] = []
         left_vals: list[float] = []
         right_vals: list[float] = []
         transform = self._pointcloud_transform(msg)
@@ -536,6 +557,12 @@ class ObstaclePerceptionNode(Node):
                     or forward > self._pointcloud_max_forward_m
                     or abs(vertical) > self._pointcloud_vertical_abs_m):
                 continue
+            if (
+                    self._pointcloud_low_min_height_m
+                    <= vertical
+                    <= self._pointcloud_low_max_height_m
+                    and abs(lateral) <= self._pointcloud_low_center_half_width_m):
+                low_front_vals.append(forward)
             if abs(lateral) <= self._pointcloud_center_half_width_m:
                 front_vals.append(forward)
             elif (
@@ -550,7 +577,14 @@ class ObstaclePerceptionNode(Node):
                 right_vals.append(forward)
 
         self._last_pointcloud_time = now
-        self._pointcloud_front = self._pointcloud_stat(front_vals)
+        general_front = self._pointcloud_stat(front_vals)
+        self._pointcloud_low_front_count = len(low_front_vals)
+        self._pointcloud_low_front = (
+            self._pointcloud_stat(low_front_vals)
+            if len(low_front_vals) >= self._pointcloud_low_min_points
+            else math.inf
+        )
+        self._pointcloud_front = _min_finite(general_front, self._pointcloud_low_front)
         self._pointcloud_left = self._pointcloud_stat(left_vals)
         self._pointcloud_right = self._pointcloud_stat(right_vals)
 
@@ -807,6 +841,12 @@ class ObstaclePerceptionNode(Node):
         depth_image_left = self._depth_left if depth_image_recent else math.inf
         depth_image_right = self._depth_right if depth_image_recent else math.inf
         pointcloud_front = self._pointcloud_front if pointcloud_recent else math.inf
+        pointcloud_low_front = (
+            self._pointcloud_low_front if pointcloud_recent else math.inf
+        )
+        pointcloud_low_front_count = (
+            self._pointcloud_low_front_count if pointcloud_recent else 0
+        )
         pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
         pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
         depth_front = _min_finite(depth_image_front, pointcloud_front)
@@ -922,6 +962,14 @@ class ObstaclePerceptionNode(Node):
                 'right_min': _json_float(depth_right),
                 'image_front_min': _json_float(depth_image_front),
                 'pointcloud_front_min': _json_float(pointcloud_front),
+                'pointcloud_low_front_min': _json_float(pointcloud_low_front),
+                'pointcloud_low_front_count': int(pointcloud_low_front_count),
+                'pointcloud_low_height_min': _json_float(
+                    self._pointcloud_low_min_height_m
+                ),
+                'pointcloud_low_height_max': _json_float(
+                    self._pointcloud_low_max_height_m
+                ),
                 'pointcloud_left_min': _json_float(pointcloud_left),
                 'pointcloud_right_min': _json_float(pointcloud_right),
                 'motion': bool(depth_motion_active),

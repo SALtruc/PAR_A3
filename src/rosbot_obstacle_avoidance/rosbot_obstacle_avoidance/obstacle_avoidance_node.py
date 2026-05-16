@@ -70,6 +70,7 @@ def _angle_delta(value: float, reference: float) -> float:
 class Snap:
     front_lidar: float
     front_depth: float
+    front_oak_low: float
     front_tof: float
     left: float
     right: float
@@ -939,6 +940,7 @@ class ObstacleAvoidanceNode(Node):
         return Snap(
             front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
             front_depth=_finite(depth.get('front_min')),
+            front_oak_low=_finite(depth.get('pointcloud_low_front_min')),
             front_tof=self._front_tof_distance(tof),
             left=_finite(fused.get('left_distance')),
             right=_finite(fused.get('right_distance')),
@@ -1116,6 +1118,7 @@ class ObstacleAvoidanceNode(Node):
             f'[NAV] state={self._state} reason={reason}{creep_info} '
             f'front_lidar={_cm(snap.front_lidar)} '
             f'front_depth={_cm(snap.front_depth)} '
+            f'oak_low={_cm(snap.front_oak_low)} '
             f'front_tof={_cm(snap.front_tof)} '
             f'front_eff={_cm(front)} '
             f'left={_cm(snap.left)} right={_cm(snap.right)} rear={_cm(snap.rear)} '

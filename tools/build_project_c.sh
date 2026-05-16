@@ -34,4 +34,5 @@ colcon build --symlink-install \
 
 echo
 echo "[ok] Built Project C in: ${ROOT}/install/rosbot_obstacle_avoidance"
-echo "[next] Run: bash tools/run_project_c_safety.sh"
+echo "[next] Check: bash tools/check_project_c_full.sh"
+echo "[next] Run  : bash tools/run_project_c_safety.sh"

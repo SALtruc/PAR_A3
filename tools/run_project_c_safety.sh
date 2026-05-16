@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Launch Project C from this repository's install space, even if another ROS 2
-# workspace is sourced in the user's shell.
+# Launch Project C full-fusion mode from this repository's install space.
+#
+# Full fusion for the ROSbot 3 PRO means:
+#   - S2 LIDAR: /scan_filtered
+#   - OAK-D depth stream as PointCloud2: /oak/points
+#   - VL53L0X ToF: /range/fl,/range/fr,/range/rl,/range/rr
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISTRO="${ROS_DISTRO:-jazzy}"
 EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
+RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 
 if [ ! -f "/opt/ros/${DISTRO}/setup.bash" ]; then
   echo "[error] /opt/ros/${DISTRO}/setup.bash not found."
@@ -35,6 +40,7 @@ source "/opt/ros/${DISTRO}/setup.bash"
 # shellcheck source=/dev/null
 source "${ROOT}/install/setup.bash"
 set -u
+export RMW_IMPLEMENTATION
 
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
 if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then
@@ -47,12 +53,20 @@ if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then
 fi
 
 echo "[ok] Using package: $actual_prefix"
+echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
 
 exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
   depth_topic:="${DEPTH_TOPIC:-/camera/depth/image_rect_raw}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC:-/oak/points}" \
+  tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
+  front_tof_topics:="${FRONT_TOF_TOPICS:-/range/fl,/range/fr}" \
   cmd_vel_topic:="${CMD_VEL_TOPIC:-/cmd_vel}" \
+  odom_topic:="${ODOM_TOPIC:-/rosbot_base_controller/odom}" \
+  imu_topic:="${IMU_TOPIC:-/imu_broadcaster/imu}" \
+  use_depth:="${USE_DEPTH:-false}" \
+  use_pointcloud:="${USE_POINTCLOUD:-true}" \
+  use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
   max_speed:="${MAX_SPEED:-0.10}" \
   backup_speed:="${BACKUP_SPEED:-0.04}" \

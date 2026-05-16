@@ -46,6 +46,10 @@ def generate_launch_description():
         DeclareLaunchArgument('pointcloud_use_tf', default_value='true'),
         DeclareLaunchArgument('pointcloud_tf_timeout_sec', default_value='0.03'),
         DeclareLaunchArgument('pointcloud_qos', default_value='sensor_data'),
+        DeclareLaunchArgument('pointcloud_low_min_height_m', default_value='0.03'),
+        DeclareLaunchArgument('pointcloud_low_max_height_m', default_value='0.60'),
+        DeclareLaunchArgument('pointcloud_low_center_half_width_m', default_value='0.22'),
+        DeclareLaunchArgument('pointcloud_low_min_points', default_value='3'),
         DeclareLaunchArgument('tof_topic', default_value='/range'),
         DeclareLaunchArgument(
             'tof_topics',
@@ -152,6 +156,12 @@ def generate_launch_description():
                 'pointcloud_use_tf': as_bool('pointcloud_use_tf'),
                 'pointcloud_tf_timeout_sec': as_float('pointcloud_tf_timeout_sec'),
                 'pointcloud_qos': LaunchConfiguration('pointcloud_qos'),
+                'pointcloud_low_min_height_m': as_float('pointcloud_low_min_height_m'),
+                'pointcloud_low_max_height_m': as_float('pointcloud_low_max_height_m'),
+                'pointcloud_low_center_half_width_m': as_float(
+                    'pointcloud_low_center_half_width_m'
+                ),
+                'pointcloud_low_min_points': as_int('pointcloud_low_min_points'),
                 'tof_topic': LaunchConfiguration('tof_topic'),
                 'tof_topics': LaunchConfiguration('tof_topics'),
                 'use_lidar': as_bool('use_lidar'),
