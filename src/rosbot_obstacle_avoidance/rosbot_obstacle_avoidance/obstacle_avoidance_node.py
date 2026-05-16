@@ -110,7 +110,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_distance', 0.28)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
-        self.declare_parameter('front_tof_obstacle_distance', 0.30)
+        self.declare_parameter('front_tof_obstacle_distance', 0.12)
         self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('dodge_clearance', 0.03)
         self.declare_parameter('rear_stop_distance', 0.20)
@@ -300,7 +300,7 @@ class ObstacleAvoidanceNode(Node):
             f'    clear_distance     : {_cm(self._clear)}  ← LIDAR/depth suspicious zone',
             f'    stop_distance      : {_cm(self._stop)}  static obstacle dodge trigger',
             f'    dodge_clearance    : {_cm(self._dodge_clear)}  dead-end side clearance',
-            f'    front_tof          : {_cm(self._front_tof_obstacle)} obstacle, {_cm(self._front_tof_hard)} hard',
+            f'    front_tof          : emergency bumper at {_cm(self._front_tof_hard)}',
             f'    front_release      : {_cm(self._front_release)} after {self._front_clear_exit_frames} clear frames',
             f'    edge_escape        : front<{_cm(self._edge_escape_front)} with side>{_cm(self._edge_escape_clear)}',
             f'    side_guard         : {_cm(self._side_guard)}  ← side scrape emergency',
@@ -327,7 +327,7 @@ class ObstacleAvoidanceNode(Node):
             f'    ROTATE             : {math.degrees(self._rot_ang * self._rotate_sec):.0f}° per step, max {self._max_rotations} attempts.',
             sep,
             f'  [PRIORITY ORDER in each loop tick]',
-            f'    0. ToF emergency         → STOP',
+            f'    0. Front ToF emergency   → BACKUP',
             f'    1. Front <{_cm(self._hard_backup)}            → BACKUP immediately',
             f'    2. Dead-end              → BACKUP + ROTATE',
             f'    3. Front ≤{_cm(self._clear)}           → OBSERVE (stop & watch)',
@@ -816,9 +816,8 @@ class ObstacleAvoidanceNode(Node):
         depth = snap.front_depth
         tof = snap.front_tof
 
-        if math.isfinite(tof):
-            if tof <= self._front_tof_obstacle:
-                return min(lidar, depth, tof)
+        if math.isfinite(tof) and tof <= self._front_tof_hard:
+            return min(lidar, depth, tof)
 
         if snap.depth_ok and math.isfinite(depth):
             # Real close depth obstacle: trust depth.
@@ -847,16 +846,12 @@ class ObstacleAvoidanceNode(Node):
             and math.isfinite(snap.front_depth)
             and snap.front_depth <= self._clear
         )
-        tof_suspicious = (
-            math.isfinite(snap.front_tof)
-            and snap.front_tof <= self._front_tof_obstacle
-        )
         dynamic_suspicious = (
             snap.dynamic
             and math.isfinite(front)
             and front <= self._dynamic_observe
         )
-        return lidar_suspicious or depth_suspicious or tof_suspicious or dynamic_suspicious
+        return lidar_suspicious or depth_suspicious or dynamic_suspicious
 
     def _depth_confirms_clear(self, snap: Snap) -> bool:
         return (
