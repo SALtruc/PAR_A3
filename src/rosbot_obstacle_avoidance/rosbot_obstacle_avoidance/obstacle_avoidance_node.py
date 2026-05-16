@@ -103,7 +103,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.24)
+        self.declare_parameter('max_speed', 0.5)
         self.declare_parameter('observe_speed', 0.0)
         self.declare_parameter('dodge_forward_speed', 0.045)
         self.declare_parameter('dodge_angular_speed', 0.45)
@@ -111,7 +111,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('backup_speed', 0.08)
 
         # Distances, metres
-        self.declare_parameter('clear_distance', 0.28)
+        self.declare_parameter('clear_distance', 0.45)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
         self.declare_parameter('front_tof_obstacle_distance', 0.12)
