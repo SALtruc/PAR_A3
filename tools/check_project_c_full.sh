@@ -10,17 +10,20 @@ EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
 # FastRTPS segfaults on the lab ROSbot image. Force CycloneDDS by default so
 # this check is stable even if the user's shell exported RMW_IMPLEMENTATION.
 RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-# Match the run script: verify only robot-local topics by default.
-PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-true}"
+# Match the run script. Local-only can hide ROSbot firmware/sensor topics on
+# the lab image, so it is opt-in instead of default.
+PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
 
-required_topics=(
+core_topics=(
   "/scan_filtered"
   "/oak/points"
+)
+
+optional_topics=(
   "/range/fl"
   "/range/fr"
   "/range/rl"
   "/range/rr"
-  "/cmd_vel"
   "/rosbot_base_controller/odom"
   "/imu_broadcaster/imu"
 )
@@ -51,12 +54,11 @@ export RMW_IMPLEMENTATION
 
 case "${PROJECT_C_LOCAL_ONLY,,}" in
   1|true|yes|on)
-    export ROS_LOCALHOST_ONLY=1
     export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-    unset ROS_STATIC_PEERS
+    unset ROS_LOCALHOST_ONLY ROS_STATIC_PEERS
     ;;
   *)
-    unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE
+    unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE ROS_STATIC_PEERS
     ;;
 esac
 
@@ -82,11 +84,19 @@ if ! command -v ros2 >/dev/null 2>&1; then
   exit 4
 fi
 
-if command -v timeout >/dev/null 2>&1; then
-  topics="$(timeout 8 ros2 topic list 2>/tmp/project_c_topic_list.err || true)"
-else
-  topics="$(ros2 topic list 2>/tmp/project_c_topic_list.err || true)"
-fi
+topics=''
+for attempt in 1 2 3 4 5; do
+  if command -v timeout >/dev/null 2>&1; then
+    topics="$(timeout 8 ros2 topic list 2>/tmp/project_c_topic_list.err || true)"
+  else
+    topics="$(ros2 topic list 2>/tmp/project_c_topic_list.err || true)"
+  fi
+  if [ -n "$topics" ]; then
+    break
+  fi
+  echo "[wait] ROS graph not visible yet, retry ${attempt}/5..."
+  sleep 1
+done
 
 if [ -z "$topics" ]; then
   echo "[error] ros2 topic list returned no topics."
@@ -95,13 +105,23 @@ if [ -z "$topics" ]; then
   exit 5
 fi
 
-missing=0
-for topic in "${required_topics[@]}"; do
+core_present=0
+for topic in "${core_topics[@]}"; do
+  if printf '%s\n' "$topics" | grep -Fx "$topic" >/dev/null; then
+    echo "[ok] topic present: $topic"
+    core_present=1
+  else
+    echo "[missing] topic missing: $topic"
+  fi
+done
+
+optional_missing=0
+for topic in "${optional_topics[@]}"; do
   if printf '%s\n' "$topics" | grep -Fx "$topic" >/dev/null; then
     echo "[ok] topic present: $topic"
   else
-    echo "[missing] topic missing: $topic"
-    missing=1
+    echo "[warn] optional topic missing before launch: $topic"
+    optional_missing=1
   fi
 done
 
@@ -109,9 +129,9 @@ echo
 echo "[info] OAK topics:"
 printf '%s\n' "$topics" | grep -E '^/oak|^/camera|depth' || true
 
-if [ "$missing" -ne 0 ]; then
+if [ "$core_present" -eq 0 ]; then
   echo
-  echo "[error] Full-fusion prerequisites are not ready."
+  echo "[error] No core obstacle sensor topic is visible."
   echo "        Try:"
   echo "        sudo snap restart husarion-depthai"
   echo "        sudo snap restart husarion-rplidar"
@@ -119,7 +139,12 @@ if [ "$missing" -ne 0 ]; then
   exit 6
 fi
 
+if [ "$optional_missing" -ne 0 ]; then
+  echo
+  echo "[warn] Some optional topics are not visible before launch."
+  echo "       The run can still start if perception receives /scan_filtered or /oak/points."
+fi
+
 echo
-echo "[ok] Full-fusion topics are ready:"
-echo "     S2 LIDAR=/scan_filtered, OAK-D depth pointcloud=/oak/points, ToF=/range/*"
+echo "[ok] Robot-local obstacle sensing is ready."
 echo "[next] Run: bash tools/run_project_c_safety.sh"

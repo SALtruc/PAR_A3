@@ -139,7 +139,7 @@ def generate_launch_description():
         DeclareLaunchArgument('tilt_imu_stale_sec', default_value='0.6'),
         DeclareLaunchArgument('debug_decisions', default_value='true'),
         DeclareLaunchArgument('debug_period_sec', default_value='1.0'),
-        DeclareLaunchArgument('local_only', default_value='true'),
+        DeclareLaunchArgument('local_only', default_value='false'),
         DeclareLaunchArgument('use_nav2_collision_monitor', default_value='true'),
     ]
 
@@ -313,11 +313,6 @@ def generate_launch_description():
     )
 
     local_only_env = [
-        SetEnvironmentVariable(
-            'ROS_LOCALHOST_ONLY',
-            '1',
-            condition=IfCondition(LaunchConfiguration('local_only')),
-        ),
         SetEnvironmentVariable(
             'ROS_AUTOMATIC_DISCOVERY_RANGE',
             'LOCALHOST',

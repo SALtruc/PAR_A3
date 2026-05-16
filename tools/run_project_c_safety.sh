@@ -14,9 +14,9 @@ EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
 # FastRTPS segfaults on the lab ROSbot image. Force CycloneDDS by default so
 # running this script does not depend on the user's current shell exports.
 RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
-# Keep the autonomous run on the robot by default. ROS 2 still uses DDS
-# internally, but this prevents discovery/traffic from going over Wi-Fi/LAN.
-PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-true}"
+# Keep this off by default because ROSbot firmware/sensor participants may be
+# exposed through robot-local network namespaces instead of localhost.
+PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
 
 if [ ! -f "/opt/ros/${DISTRO}/setup.bash" ]; then
   echo "[error] /opt/ros/${DISTRO}/setup.bash not found."
@@ -49,12 +49,11 @@ export RMW_IMPLEMENTATION
 
 case "${PROJECT_C_LOCAL_ONLY,,}" in
   1|true|yes|on)
-    export ROS_LOCALHOST_ONLY=1
     export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-    unset ROS_STATIC_PEERS
+    unset ROS_LOCALHOST_ONLY ROS_STATIC_PEERS
     ;;
   *)
-    unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE
+    unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE ROS_STATIC_PEERS
     ;;
 esac
 
