@@ -13,13 +13,13 @@ RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 # Match the run script. Local-only can hide ROSbot firmware/sensor topics on
 # the lab image, so it is opt-in instead of default.
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
+# Project C assessment mode requires all robot sensors. Set this false only for
+# degraded demos where LIDAR/OAK are enough and ToF is intentionally disabled.
+PROJECT_C_REQUIRE_FULL_FUSION="${PROJECT_C_REQUIRE_FULL_FUSION:-true}"
 
-core_topics=(
+required_topics=(
   "/scan_filtered"
   "/oak/points"
-)
-
-optional_topics=(
   "/range/fl"
   "/range/fr"
   "/range/rl"
@@ -75,6 +75,7 @@ fi
 echo "[ok] Package: $actual_prefix"
 echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
 echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
+echo "[ok] PROJECT_C_REQUIRE_FULL_FUSION=$PROJECT_C_REQUIRE_FULL_FUSION"
 if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1" ]; then
   echo "[ok] ROS discovery is restricted to localhost"
 fi
@@ -105,46 +106,44 @@ if [ -z "$topics" ]; then
   exit 5
 fi
 
-core_present=0
-for topic in "${core_topics[@]}"; do
+missing=0
+for topic in "${required_topics[@]}"; do
   if printf '%s\n' "$topics" | grep -Fx "$topic" >/dev/null; then
     echo "[ok] topic present: $topic"
-    core_present=1
   else
     echo "[missing] topic missing: $topic"
-  fi
-done
-
-optional_missing=0
-for topic in "${optional_topics[@]}"; do
-  if printf '%s\n' "$topics" | grep -Fx "$topic" >/dev/null; then
-    echo "[ok] topic present: $topic"
-  else
-    echo "[warn] optional topic missing before launch: $topic"
-    optional_missing=1
+    missing=1
   fi
 done
 
 echo
 echo "[info] OAK topics:"
 printf '%s\n' "$topics" | grep -E '^/oak|^/camera|depth' || true
+echo
+echo "[info] range/ToF topics:"
+printf '%s\n' "$topics" | grep -E 'range|tof|vl53|distance' || true
 
-if [ "$core_present" -eq 0 ]; then
+if [ "$missing" -ne 0 ] && {
+    [ "${PROJECT_C_REQUIRE_FULL_FUSION,,}" = "true" ] ||
+    [ "${PROJECT_C_REQUIRE_FULL_FUSION}" = "1" ]; }; then
   echo
-  echo "[error] No core obstacle sensor topic is visible."
+  echo "[error] Full-fusion prerequisites are not ready."
   echo "        Try:"
   echo "        sudo snap restart husarion-depthai"
   echo "        sudo snap restart husarion-rplidar"
   echo "        sudo snap restart rosbot"
+  echo
+  echo "        Diagnose missing ToF with:"
+  echo "        ros2 topic list | sort | grep -E 'range|tof|vl53|distance'"
+  echo "        snap logs rosbot -n 100"
   exit 6
 fi
 
-if [ "$optional_missing" -ne 0 ]; then
+if [ "$missing" -ne 0 ]; then
   echo
-  echo "[warn] Some optional topics are not visible before launch."
-  echo "       The run can still start if perception receives /scan_filtered or /oak/points."
+  echo "[warn] Missing topics ignored because PROJECT_C_REQUIRE_FULL_FUSION=false."
 fi
 
 echo
-echo "[ok] Robot-local obstacle sensing is ready."
+echo "[ok] Full-fusion robot sensing is ready."
 echo "[next] Run: bash tools/run_project_c_safety.sh"
