@@ -7,7 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISTRO="${ROS_DISTRO:-jazzy}"
 EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
-RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+# FastRTPS segfaults on the lab ROSbot image. Force CycloneDDS by default so
+# this check is stable even if the user's shell exported RMW_IMPLEMENTATION.
+RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 
 required_topics=(
   "/scan_filtered"
