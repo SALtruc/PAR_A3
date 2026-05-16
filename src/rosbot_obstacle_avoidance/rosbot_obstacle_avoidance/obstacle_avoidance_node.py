@@ -71,6 +71,7 @@ class Snap:
     front_lidar: float
     front_depth: float
     front_oak_low: float
+    front_oak_low_count: int
     front_tof: float
     left: float
     right: float
@@ -132,10 +133,11 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_observe_frames', 3)
         self.declare_parameter('front_release_distance', 0.45)
         self.declare_parameter('front_clear_exit_frames', 5)
-        self.declare_parameter('backup_sec', 0.70)
+        self.declare_parameter('backup_sec', 1.20)
         self.declare_parameter('dodge_step_deg', 60.0)
         self.declare_parameter('dodge_pivot_sec', 0.60)
-        self.declare_parameter('rotation_step_deg', 70.0)
+        self.declare_parameter('rotation_step_deg', 95.0)
+        self.declare_parameter('rotation_commit_sec', 0.65)
         self.declare_parameter('max_rotation_attempts', 3)
         self.declare_parameter('clearer_side_deadband', 0.05)
         self.declare_parameter('avoid_turn_direction', -1.0)
@@ -154,7 +156,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('contact_cmd_speed_min', 0.025)
         self.declare_parameter('contact_odom_speed_max', 0.012)
         self.declare_parameter('contact_odom_angular_max', 0.08)
-        self.declare_parameter('contact_stall_sec', 5.0)
+        self.declare_parameter('contact_stall_sec', 1.50)
         self.declare_parameter('contact_recovery_cooldown_sec', 1.8)
         self.declare_parameter('contact_odom_stale_sec', 0.5)
         self.declare_parameter('tilt_recovery_enabled', True)
@@ -218,6 +220,7 @@ class ObstacleAvoidanceNode(Node):
         self._dodge_pivot_sec = max(0.0, float(p('dodge_pivot_sec').value))
         self._dodge_sec = math.radians(float(p('dodge_step_deg').value)) / max(abs(self._dodge_ang), 0.01)
         self._rotate_sec = math.radians(float(p('rotation_step_deg').value)) / max(abs(self._rot_ang), 0.01)
+        self._rotate_commit_sec = max(0.0, float(p('rotation_commit_sec').value))
         self._max_rotations = max(1, int(p('max_rotation_attempts').value))
         self._clearer_side_deadband = max(0.0, float(p('clearer_side_deadband').value))
         fallback_turn = float(p('avoid_turn_direction').value)
@@ -291,6 +294,21 @@ class ObstacleAvoidanceNode(Node):
     # ---------------------------------------------------------------------
 
     def _print_detection_summary(self):
+        sep = '=' * 56
+        lines = [
+            sep,
+            'PROJECT C SAFETY NAV - ACTIVE SETTINGS',
+            sep,
+            f'front observe <= {_cm(self._clear)} | dodge <= {_cm(self._stop)} | hard backup <= {_cm(self._hard_backup)}',
+            f'ToF emergency <= {_cm(self._front_tof_hard)} | side scrape <= {_cm(self._side_guard)} | rear stop <= {_cm(self._rear_stop)}',
+            f'recovery: backup {self._backup_sec:.2f}s, rotate commit {self._rotate_commit_sec:.2f}s',
+            'log: state/reason | obstacle + 4-side distances | OAK low-view',
+            sep,
+        ]
+        for line in lines:
+            self.get_logger().info(line)
+        return
+
         sep = '=' * 60
         lines = [
             sep,
@@ -325,7 +343,7 @@ class ObstacleAvoidanceNode(Node):
             f'    CONTACT RECOVERY   : cmd>{self._contact_cmd_speed_min:.3f} m/s but odom<{self._contact_odom_speed_max:.3f} m/s',
             f'                         for {self._contact_stall_sec:.2f}s -> BACKUP + ROTATE.',
             f'    TILT RECOVERY      : IMU tilt>{math.degrees(self._tilt_backup_rad):.0f}deg -> BACKUP, >{math.degrees(self._tilt_stop_rad):.0f}deg -> STOP {self._tilt_stop_pause:.2f}s then BACKUP.',
-            f'    ROTATE             : {math.degrees(self._rot_ang * self._rotate_sec):.0f}° per step, max {self._max_rotations} attempts.',
+            f'    ROTATE             : commit {self._rotate_commit_sec:.2f}s, then check clear; {math.degrees(self._rot_ang * self._rotate_sec):.0f}° max step.',
             sep,
             f'  [PRIORITY ORDER in each loop tick]',
             f'    0. Front ToF emergency   → BACKUP',
@@ -783,6 +801,12 @@ class ObstacleAvoidanceNode(Node):
             self._start_backup()
             return True
 
+        elapsed = max(0.0, now - self._state_start)
+        if now < self._state_end and elapsed < self._rotate_commit_sec:
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_dir * self._rot_ang
+            return True
+
         if front > self._clear or self._depth_confirms_clear(snap):
             self._set_state(DRIVE)
             return False
@@ -941,6 +965,7 @@ class ObstacleAvoidanceNode(Node):
             front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
             front_depth=_finite(depth.get('front_min')),
             front_oak_low=_finite(depth.get('pointcloud_low_front_min')),
+            front_oak_low_count=int(depth.get('pointcloud_low_front_count', 0) or 0),
             front_tof=self._front_tof_distance(tof),
             left=_finite(fused.get('left_distance')),
             right=_finite(fused.get('right_distance')),
@@ -1114,16 +1139,34 @@ class ObstacleAvoidanceNode(Node):
                 and snap is not None and not snap.dynamic and front > self._stop)
             else ''
         )
+        obstacle = (
+            front <= self._clear
+            or snap.left <= self._side_guard
+            or snap.right <= self._side_guard
+            or snap.rear <= self._rear_stop
+            or snap.dynamic
+            or snap.tof_emergency
+        )
+        oak_low_hit = (
+            math.isfinite(snap.front_oak_low)
+            and snap.front_oak_low <= self._clear
+            and snap.front_oak_low_count > 0
+        )
+        lidar_front_hit = (
+            math.isfinite(snap.front_lidar)
+            and snap.front_lidar <= self._clear
+        )
+        oak_low_status = 'LOW_OBSTACLE' if oak_low_hit else 'clear'
+        lidar_miss = 'yes' if oak_low_hit and not lidar_front_hit else 'no'
         line = (
-            f'[NAV] state={self._state} reason={reason}{creep_info} '
-            f'front_lidar={_cm(snap.front_lidar)} '
-            f'front_depth={_cm(snap.front_depth)} '
-            f'oak_low={_cm(snap.front_oak_low)} '
-            f'front_tof={_cm(snap.front_tof)} '
-            f'front_eff={_cm(front)} '
-            f'left={_cm(snap.left)} right={_cm(snap.right)} rear={_cm(snap.rear)} '
-            f'dynamic={snap.dynamic}{dyn_elapsed}{tilt_info} turn={"L" if self._turn_dir > 0 else "R"} '
-            f'obs={self._observe_count}'
+            f'[NAV] state={self._state} reason={reason}{creep_info} | '
+            f'obstacle={"YES" if obstacle else "NO"} '
+            f'front={_cm(front)} left={_cm(snap.left)} '
+            f'right={_cm(snap.right)} rear={_cm(snap.rear)} | '
+            f'oak_low={oak_low_status} dist={_cm(snap.front_oak_low)} '
+            f'pts={snap.front_oak_low_count} lidar_miss={lidar_miss} | '
+            f'dynamic={"YES" if snap.dynamic else "NO"}{dyn_elapsed}{tilt_info} '
+            f'turn={"L" if self._turn_dir > 0 else "R"} obs={self._observe_count}'
         )
         if self._state in (OBSERVE, DODGE, SIDE_ESCAPE, EDGE_ESCAPE, BACKUP, ROTATE):
             self.get_logger().warn(line)

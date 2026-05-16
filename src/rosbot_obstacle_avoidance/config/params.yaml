@@ -25,7 +25,7 @@ obstacle_perception:
     front_percentile: 5.0
     robot_half_width_m: 0.13
     front_path_half_width_m: 0.14
-    side_guard_forward_m: 0.35
+    side_guard_forward_m: 0.28
     side_guard_rear_m: 0.20
     side_percentile: 10.0
     front_close_min_rays: 3
@@ -51,15 +51,15 @@ obstacle_perception:
     pointcloud_side_min_abs_m: 0.15
     pointcloud_side_max_abs_m: 0.75
     pointcloud_vertical_abs_m: 0.75
-    pointcloud_low_min_height_m: 0.03
-    pointcloud_low_max_height_m: 0.60
-    pointcloud_low_center_half_width_m: 0.22
-    pointcloud_low_min_points: 3
-    pointcloud_min_forward_m: 0.08
+    pointcloud_low_min_height_m: -0.45
+    pointcloud_low_max_height_m: 0.70
+    pointcloud_low_center_half_width_m: 0.32
+    pointcloud_low_min_points: 1
+    pointcloud_min_forward_m: 0.02
     pointcloud_max_forward_m: 4.00
-    pointcloud_sample_step: 3
-    pointcloud_roi_stride_px: 12
-    pointcloud_process_hz: 5.0
+    pointcloud_sample_step: 1
+    pointcloud_roi_stride_px: 6
+    pointcloud_process_hz: 8.0
     pointcloud_unorganized_max_points: 8000
 
     # Dynamic motion from depth image lower-centre ROI, useful for legs/feet.
@@ -103,10 +103,11 @@ obstacle_avoidance:
 
     # Strong recovery only after too-close/dead-end
     rotation_angular_speed: 0.50
-    rotation_step_deg: 70.0
+    rotation_step_deg: 95.0
+    rotation_commit_sec: 0.65
     max_rotation_attempts: 3
     backup_speed: 0.08
-    backup_sec: 0.70
+    backup_sec: 1.20
 
     # Main thresholds
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
@@ -114,10 +115,10 @@ obstacle_avoidance:
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
     front_tof_obstacle_distance: 0.12
     front_tof_hard_distance: 0.12
-    dodge_clearance: 0.015     # min side clearance for dead-end; narrow-passage profile
+    dodge_clearance: 0.010     # min side clearance for dead-end; narrow-passage profile
     rear_stop_distance: 0.20
-    side_guard_distance: 0.015
-    side_escape_distance: 0.03
+    side_guard_distance: 0.010
+    side_escape_distance: 0.025
     side_escape_angular_speed: 0.30
     side_escape_sec: 0.45
     edge_escape_enabled: true
@@ -149,7 +150,7 @@ obstacle_avoidance:
     contact_cmd_speed_min: 0.025
     contact_odom_speed_max: 0.012
     contact_odom_angular_max: 0.08
-    contact_stall_sec: 5.0
+    contact_stall_sec: 1.50
     contact_recovery_cooldown_sec: 1.8
     contact_odom_stale_sec: 0.5
 
