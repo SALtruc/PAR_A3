@@ -92,7 +92,7 @@ obstacle_avoidance:
     control_hz: 20.0
 
     # Default movement
-    max_speed: 1
+    max_speed: 1.0
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
