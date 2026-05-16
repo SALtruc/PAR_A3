@@ -159,6 +159,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('tilt_recovery_enabled', True)
         self.declare_parameter('tilt_backup_deg', 8.0)
         self.declare_parameter('tilt_stop_deg', 18.0)
+        self.declare_parameter('tilt_stop_pause_sec', 0.30)
         self.declare_parameter('tilt_imu_stale_sec', 0.6)
         self.declare_parameter('debug_decisions', True)
         self.declare_parameter('debug_period_sec', 0.7)
@@ -235,6 +236,7 @@ class ObstacleAvoidanceNode(Node):
         self._tilt_recovery_enabled = _as_bool(p('tilt_recovery_enabled').value)
         self._tilt_backup_rad = math.radians(max(0.0, float(p('tilt_backup_deg').value)))
         self._tilt_stop_rad = math.radians(max(0.0, float(p('tilt_stop_deg').value)))
+        self._tilt_stop_pause = max(0.0, float(p('tilt_stop_pause_sec').value))
         self._tilt_imu_stale = max(0.05, float(p('tilt_imu_stale_sec').value))
         self._debug = _as_bool(p('debug_decisions').value)
         self._debug_period = float(p('debug_period_sec').value)
@@ -265,6 +267,9 @@ class ObstacleAvoidanceNode(Node):
         self._tilt_rad = 0.0
         self._imu_baseline: tuple[float, float] | None = None
         self._imu_time = None
+        self._tilt_pause_until = 0.0
+        self._tilt_backup_pending = False
+        self._tilt_recovery_active = False
         self._motion_cmd_since = None
         self._contact_pending = False
         self._contact_cooldown_until = 0.0
@@ -318,7 +323,7 @@ class ObstacleAvoidanceNode(Node):
             f'    BACKUP             : Reverse {self._backup_speed:.3f} m/s for {self._backup_sec:.2f}s then ROTATE.',
             f'    CONTACT RECOVERY   : cmd>{self._contact_cmd_speed_min:.3f} m/s but odom<{self._contact_odom_speed_max:.3f} m/s',
             f'                         for {self._contact_stall_sec:.2f}s -> BACKUP + ROTATE.',
-            f'    TILT RECOVERY      : IMU tilt>{math.degrees(self._tilt_backup_rad):.0f}deg -> BACKUP, >{math.degrees(self._tilt_stop_rad):.0f}deg -> STOP.',
+            f'    TILT RECOVERY      : IMU tilt>{math.degrees(self._tilt_backup_rad):.0f}deg -> BACKUP, >{math.degrees(self._tilt_stop_rad):.0f}deg -> STOP {self._tilt_stop_pause:.2f}s then BACKUP.',
             f'    ROTATE             : {math.degrees(self._rot_ang * self._rotate_sec):.0f}° per step, max {self._max_rotations} attempts.',
             sep,
             f'  [PRIORITY ORDER in each loop tick]',
@@ -422,9 +427,7 @@ class ObstacleAvoidanceNode(Node):
         snap = self._snap()
         front = self._effective_front(snap)
 
-        if self._tilt_stop(now):
-            self._set_state(STOPPED)
-            self._log('tilt_stop', snap)
+        if self._handle_tilt_recovery(twist, snap, now):
             self._publish_cmd(twist)
             return
 
@@ -442,9 +445,15 @@ class ObstacleAvoidanceNode(Node):
         else:
             self._dynamic_first_seen = None
 
-        if snap.tof_emergency and not math.isfinite(snap.front_tof):
-            self._set_state(STOPPED)
-            self._log('tof_emergency_stop', snap)
+        front_tof_hard = (
+            snap.tof_emergency
+            and math.isfinite(snap.front_tof)
+            and snap.front_tof <= self._front_tof_hard
+        )
+        if front_tof_hard and self._state not in (BACKUP, ROTATE):
+            self._start_backup()
+            self._handle_backup(twist, snap, now)
+            self._log('tof_emergency_backup', snap)
             self._publish_cmd(twist)
             return
 
@@ -1032,6 +1041,41 @@ class ObstacleAvoidanceNode(Node):
             and self._imu_recent(now)
             and self._tilt_rad >= self._tilt_stop_rad
         )
+
+    def _handle_tilt_recovery(self, twist: Twist, snap: Snap, now: float) -> bool:
+        if not self._tilt_recovery_enabled or not self._imu_recent(now):
+            self._tilt_backup_pending = False
+            self._tilt_recovery_active = False
+            return False
+
+        severe_tilt = self._tilt_rad >= self._tilt_stop_rad
+        if not severe_tilt:
+            self._tilt_backup_pending = False
+            if self._state not in (BACKUP, ROTATE):
+                self._tilt_recovery_active = False
+            return False
+
+        if self._state in (BACKUP, ROTATE) and self._tilt_recovery_active:
+            return False
+
+        if not self._tilt_backup_pending:
+            self._tilt_backup_pending = True
+            self._tilt_pause_until = now + self._tilt_stop_pause
+            self._set_state(STOPPED)
+            self._log('tilt_stop_pause', snap)
+            return True
+
+        if now < self._tilt_pause_until:
+            self._set_state(STOPPED)
+            self._log('tilt_stop_pause', snap)
+            return True
+
+        self._tilt_backup_pending = False
+        self._tilt_recovery_active = True
+        self._start_backup()
+        self._handle_backup(twist, snap, now)
+        self._log('tilt_stop_backup', snap)
+        return True
 
     def _publish_cmd(self, twist: Twist):
         self._track_contact_stall(twist)

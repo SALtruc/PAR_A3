@@ -11,7 +11,7 @@ obstacle_perception:
     obstacle_topic: /obstacle_representation
 
     use_lidar: true
-    use_depth: false
+    use_depth: true
     use_pointcloud: true
     use_tof: true
     publish_hz: 20.0
@@ -152,6 +152,7 @@ obstacle_avoidance:
     tilt_recovery_enabled: true
     tilt_backup_deg: 8.0
     tilt_stop_deg: 18.0
+    tilt_stop_pause_sec: 0.30
     tilt_imu_stale_sec: 0.6
 
     debug_decisions: true

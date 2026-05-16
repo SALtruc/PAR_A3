@@ -11,7 +11,7 @@ least five minutes without human joystick control.
 | Dynamic obstacle | Person crossing front field triggers a confirmed stop before re-planning | `DYNAMIC_SEEN` then `DYNAMIC_AVOID`, CSV latency |
 | Dead end | Robot backs up, turns to clearer side, returns to `DRIVE` | `DEAD_END`, `BACKUP`, `TURN_OUT`, recovery success |
 | Narrow passage | Robot slows and centers between walls | lower speed, left/right distances converge |
-| Emergency range | Robot hard-stops when ToF/front fused range is too close | `EMERGENCY` state |
+| Emergency range | Robot backs up when front ToF/front fused range is too close | `BACKUP` state |
 | LIDAR-only ablation | Run same scenario with depth disabled | CSV labelled by launch command |
 | LIDAR + depth | Run same scenario with depth enabled | Compare dynamic response/collision rate |
 
@@ -49,10 +49,15 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 
 ```bash
 # LIDAR + ToF only
-ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=false
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
+  use_depth:=false \
+  use_pointcloud:=false
 
-# LIDAR + depth + ToF
-ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=true
+# Full fusion: LIDAR + depth image + pointcloud + ToF
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
+  use_depth:=true \
+  use_pointcloud:=true \
+  use_tof:=true
 ```
 
 ## Tuning Order

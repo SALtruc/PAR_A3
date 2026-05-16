@@ -24,13 +24,15 @@ current fused sensor snapshot.
 | Too close | If front is under `stop_distance`, back up before checking direction |
 | Dead end | Front blocked and both body sides lack clearance: back up, then rotate to search |
 | Side scrape risk | Only when side body clearance is very small, rotate away briefly |
-| ToF emergency | Hard stop, regardless of the policy |
+| ToF emergency | Front virtual bumper interrupts the policy and starts backup recovery |
+| IMU tilt risk | Pause briefly, back up, then rotate/search for a safer heading |
 
 ## Run
 
 ```bash
 ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:=/scan_filtered \
+  depth_topic:=/camera/depth/image_rect_raw \
   pointcloud_topic:=/oak/points \
   cmd_vel_topic:=/cmd_vel \
   use_nav2_collision_monitor:=true \
@@ -40,9 +42,10 @@ ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
 ```
 
 Use this as the real-robot safety run after confirming `/battery`,
-`/scan_filtered`, and `/oak/points` are publishing. The controller publishes to
-`/cmd_vel_raw`; Nav2 Collision Monitor checks stop/slow zones and publishes the
-final command to `/cmd_vel`.
+`/scan_filtered`, `/camera/depth/image_rect_raw`, `/oak/points`, and the front
+ToF topics are publishing. The controller publishes to `/cmd_vel_raw`; Nav2
+Collision Monitor checks stop/slow zones and publishes the final command to
+`/cmd_vel`.
 
 If Nav2 Collision Monitor is not installed or does not start on the robot, use
 the same safety launch without the Nav2 layer:
@@ -50,6 +53,7 @@ the same safety launch without the Nav2 layer:
 ```bash
 ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:=/scan_filtered \
+  depth_topic:=/camera/depth/image_rect_raw \
   pointcloud_topic:=/oak/points \
   cmd_vel_topic:=/cmd_vel \
   max_speed:=0.06 \
@@ -59,6 +63,12 @@ ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
 
 This package keeps only `project_c_safety.launch.py` as the Project C launch
 entrypoint.
+
+The default configuration matches the report methodology: S2 LIDAR, OAK depth
+image/point cloud, and front ToF are fused into `/obstacle_representation`.
+Front ToF acts as a virtual bumper: a hard front reading triggers backup
+recovery. If the IMU reports a severe tilt, the robot pauses briefly, backs up,
+then rotates to recover.
 
 Useful topics:
 
@@ -79,7 +89,10 @@ Do this before a full 5 minute trial on the real robot:
 ```bash
 ros2 topic echo --once /battery
 ros2 topic hz /scan_filtered
+ros2 topic hz /camera/depth/image_rect_raw
 ros2 topic hz /oak/points
+ros2 topic echo --once /range/fl
+ros2 topic echo --once /range/fr
 ros2 topic echo --once /obstacle_representation
 ```
 
@@ -92,13 +105,18 @@ or below `min_battery_voltage`.
 LIDAR-only trial:
 
 ```bash
-ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=false
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
+  use_depth:=false \
+  use_pointcloud:=false
 ```
 
-LIDAR + depth trial:
+Full fusion trial:
 
 ```bash
-ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=true use_pointcloud:=true
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
+  use_depth:=true \
+  use_pointcloud:=true \
+  use_tof:=true
 ```
 
 Compare the CSV files for collision rate, dynamic response latency, recovery
