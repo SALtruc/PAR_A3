@@ -92,11 +92,11 @@ obstacle_avoidance:
     control_hz: 20.0
 
     # Default movement
-    max_speed: 0.30
+    max_speed: 0.22
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
-    dodge_forward_speed: 0.060
+    dodge_forward_speed: 0.045
     dodge_angular_speed: 0.55
     dodge_step_deg: 60.0
     dodge_pivot_sec: 0.60
@@ -115,18 +115,21 @@ obstacle_avoidance:
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
     front_tof_obstacle_distance: 0.12
     front_tof_hard_distance: 0.12
-    dodge_clearance: 0.010     # min side clearance for dead-end; narrow-passage profile
+    dodge_clearance: 0.12      # min side clearance for dead-end/corner recovery
     rear_stop_distance: 0.20
-    side_guard_distance: 0.010
-    side_escape_distance: 0.025
-    side_escape_angular_speed: 0.38
+    side_guard_distance: 0.08
+    side_escape_distance: 0.12
+    side_escape_angular_speed: 0.32
     side_escape_sec: 0.45
     edge_escape_enabled: true
-    edge_escape_front_distance: 0.15
+    edge_escape_front_distance: 0.25
     edge_escape_clearance: 0.20
-    edge_escape_angular_speed: 0.55
-    edge_escape_sec: 0.80
+    edge_escape_angular_speed: 0.45
+    edge_escape_sec: 1.00
     edge_escape_max_attempts: 3
+    corner_backup_side_distance: 0.05
+    corner_backup_front_distance: 0.35
+    corner_backup_both_sides_distance: 0.10
     dynamic_observe_distance: 0.80
     observe_frames: 8          # frames to confirm obstacle before classify static/dynamic
     clear_observe_frames: 3
@@ -136,9 +139,13 @@ obstacle_avoidance:
     avoid_turn_direction: -1.0 # fallback when side clearances are nearly tied; -1 = right
 
     # Static approach + dynamic timeout
-    creep_speed: 0.055         # m/s approach speed after static confirmed (to reach stop_distance then dodge)
+    creep_speed: 0.040         # m/s approach speed after static confirmed (to reach stop_distance then dodge)
     dynamic_timeout_sec: 5.0   # seconds to wait for dynamic object to clear before treating as static
     dynamic_close_distance: 0.20  # sudden dynamic appearance threshold (within 20 cm)
+    surprise_backup_enabled: true
+    surprise_backup_distance: 0.20
+    surprise_backup_sec: 0.45
+    surprise_backup_cooldown_sec: 1.20
 
     # Keep false battery stop off during lab testing unless your battery topic is reliable.
     require_battery_ok: false
