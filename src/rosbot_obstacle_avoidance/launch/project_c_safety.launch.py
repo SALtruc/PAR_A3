@@ -1,7 +1,7 @@
 """Launch Project C with safety defaults and optional Nav2 Collision Monitor."""
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
@@ -139,6 +139,7 @@ def generate_launch_description():
         DeclareLaunchArgument('tilt_imu_stale_sec', default_value='0.6'),
         DeclareLaunchArgument('debug_decisions', default_value='true'),
         DeclareLaunchArgument('debug_period_sec', default_value='1.0'),
+        DeclareLaunchArgument('local_only', default_value='true'),
         DeclareLaunchArgument('use_nav2_collision_monitor', default_value='true'),
     ]
 
@@ -311,7 +312,20 @@ def generate_launch_description():
         ],
     )
 
-    return LaunchDescription(args + [
+    local_only_env = [
+        SetEnvironmentVariable(
+            'ROS_LOCALHOST_ONLY',
+            '1',
+            condition=IfCondition(LaunchConfiguration('local_only')),
+        ),
+        SetEnvironmentVariable(
+            'ROS_AUTOMATIC_DISCOVERY_RANGE',
+            'LOCALHOST',
+            condition=IfCondition(LaunchConfiguration('local_only')),
+        ),
+    ]
+
+    return LaunchDescription(args + local_only_env + [
         obstacle_perception,
         obstacle_avoidance,
         obstacle_trial_logger,

@@ -14,6 +14,9 @@ EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
 # FastRTPS segfaults on the lab ROSbot image. Force CycloneDDS by default so
 # running this script does not depend on the user's current shell exports.
 RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+# Keep the autonomous run on the robot by default. ROS 2 still uses DDS
+# internally, but this prevents discovery/traffic from going over Wi-Fi/LAN.
+PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-true}"
 
 if [ ! -f "/opt/ros/${DISTRO}/setup.bash" ]; then
   echo "[error] /opt/ros/${DISTRO}/setup.bash not found."
@@ -44,6 +47,17 @@ source "${ROOT}/install/setup.bash"
 set -u
 export RMW_IMPLEMENTATION
 
+case "${PROJECT_C_LOCAL_ONLY,,}" in
+  1|true|yes|on)
+    export ROS_LOCALHOST_ONLY=1
+    export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+    unset ROS_STATIC_PEERS
+    ;;
+  *)
+    unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE
+    ;;
+esac
+
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
 if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then
   echo "[error] rosbot_obstacle_avoidance resolved to the wrong workspace:"
@@ -56,6 +70,10 @@ fi
 
 echo "[ok] Using package: $actual_prefix"
 echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
+echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
+if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1" ]; then
+  echo "[ok] ROS discovery is restricted to localhost"
+fi
 
 exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
@@ -70,6 +88,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   use_pointcloud:="${USE_POINTCLOUD:-true}" \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
+  local_only:="${PROJECT_C_LOCAL_ONLY}" \
   max_speed:="${MAX_SPEED:-0.30}" \
   backup_speed:="${BACKUP_SPEED:-0.06}" \
   backup_sec:="${BACKUP_SEC:-1.60}" \

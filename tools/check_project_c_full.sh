@@ -10,6 +10,8 @@ EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
 # FastRTPS segfaults on the lab ROSbot image. Force CycloneDDS by default so
 # this check is stable even if the user's shell exported RMW_IMPLEMENTATION.
 RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+# Match the run script: verify only robot-local topics by default.
+PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-true}"
 
 required_topics=(
   "/scan_filtered"
@@ -47,6 +49,17 @@ source "${ROOT}/install/setup.bash"
 set -u
 export RMW_IMPLEMENTATION
 
+case "${PROJECT_C_LOCAL_ONLY,,}" in
+  1|true|yes|on)
+    export ROS_LOCALHOST_ONLY=1
+    export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+    unset ROS_STATIC_PEERS
+    ;;
+  *)
+    unset ROS_LOCALHOST_ONLY ROS_AUTOMATIC_DISCOVERY_RANGE
+    ;;
+esac
+
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
 if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then
   echo "[error] rosbot_obstacle_avoidance resolved to the wrong workspace:"
@@ -59,6 +72,10 @@ fi
 
 echo "[ok] Package: $actual_prefix"
 echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
+echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
+if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1" ]; then
+  echo "[ok] ROS discovery is restricted to localhost"
+fi
 
 if ! command -v ros2 >/dev/null 2>&1; then
   echo "[error] ros2 command not found after sourcing ROS."
