@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Start/restart the ROSbot snap services used by the QR navigation demo, then
-# print the key ROS topics so the real robot can be checked before launch.
+# Start/restart the ROSbot snap services, then verify the key sensor topics
+# are alive before launching any project.
+#
+# Usage:
+#   bash tools/rosbot_snap_bringup.sh          # restart all snaps, then check
+#   WAIT_SEC=15 bash tools/rosbot_snap_bringup.sh
 
 set -u
 
-WAIT_SEC="${WAIT_SEC:-2}"
+WAIT_SEC="${WAIT_SEC:-12}"
+
+# ── snap helpers ───────────────────────────────────────────────────────────────
 
 if ! command -v snap >/dev/null 2>&1; then
   echo "[error] snap is not installed on this machine."
@@ -12,40 +18,46 @@ if ! command -v snap >/dev/null 2>&1; then
 fi
 
 run_snap_command() {
-  local action="$1"
-  local snap_name="$2"
-
+  local action="$1" snap_name="$2"
   if ! snap list "$snap_name" >/dev/null 2>&1; then
-    echo "[skip] snap '$snap_name' is not installed."
+    echo "[skip] snap '$snap_name' is not installed"
     return 0
   fi
-
   echo "[snap] sudo snap $action $snap_name"
   if sudo snap "$action" "$snap_name"; then
-    echo "[ok] $snap_name $action complete"
+    echo "[ok]   $snap_name ${action}d"
   else
-    echo "[warn] sudo snap $action $snap_name failed; continuing."
+    echo "[warn] sudo snap $action $snap_name failed; continuing"
   fi
 }
 
-run_snap_command start rosbot
+sudo -v  # cache credentials
+
+# rosbot first — it resets STM32 over GPIO so micro-ROS can reconnect.
+run_snap_command restart rosbot
+echo "[wait] 10 s for STM32 firmware to boot and micro-ROS to connect..."
+sleep 10
+
+run_snap_command restart husarion-rplidar
 run_snap_command restart husarion-depthai
-run_snap_command restart husarion-webui
+
+echo "[wait] ${WAIT_SEC}s for sensor topics to stabilise..."
+sleep "$WAIT_SEC"
+
+# ── snap service status ────────────────────────────────────────────────────────
 
 echo
-echo "[snap] service status"
-for snap_name in rosbot husarion-depthai husarion-webui; do
-  if snap list "$snap_name" >/dev/null 2>&1; then
-    snap services "$snap_name" 2>/dev/null || true
+echo "[snap] service status:"
+for sn in rosbot husarion-rplidar husarion-depthai; do
+  if snap list "$sn" >/dev/null 2>&1; then
+    snap services "$sn" 2>/dev/null || true
   fi
 done
 
-echo
-echo "[ros] waiting ${WAIT_SEC}s for services to republish topics..."
-sleep "$WAIT_SEC"
+# ── ROS topic check ────────────────────────────────────────────────────────────
 
 if ! command -v ros2 >/dev/null 2>&1; then
-  for distro in "${ROS_DISTRO:-}" jazzy humble iron foxy; do
+  for distro in "${ROS_DISTRO:-}" jazzy humble; do
     if [ -n "$distro" ] && [ -f "/opt/ros/$distro/setup.bash" ]; then
       # shellcheck source=/dev/null
       source "/opt/ros/$distro/setup.bash"
@@ -55,46 +67,36 @@ if ! command -v ros2 >/dev/null 2>&1; then
 fi
 
 if ! command -v ros2 >/dev/null 2>&1; then
-  echo "[warn] ros2 command not found; skipped topic checks."
+  echo "[warn] ros2 not found after sourcing ROS — skipping topic checks"
   exit 0
 fi
 
-if [ -f "$HOME/ros2_ws/install/setup.bash" ]; then
-  # shellcheck source=/dev/null
-  source "$HOME/ros2_ws/install/setup.bash"
-fi
-
-echo
-echo "[ros] package resolution"
-if ros2 pkg prefix rosbot_qr_navigation >/tmp/rosbot_qr_navigation_prefix.txt 2>/dev/null; then
-  echo "[ok] rosbot_qr_navigation prefix: $(cat /tmp/rosbot_qr_navigation_prefix.txt)"
-else
-  echo "[warn] rosbot_qr_navigation not found in the sourced ROS environment."
-fi
-
-topic_list() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 5 ros2 topic list 2>/dev/null
-  else
-    ros2 topic list 2>/dev/null
-  fi
-}
-
-topics="$(topic_list || true)"
+topics="$(timeout 8 ros2 topic list 2>/dev/null || true)"
 
 check_topic() {
   local topic="$1"
   if printf '%s\n' "$topics" | grep -Fx "$topic" >/dev/null; then
-    echo "[ok] topic present: $topic"
+    echo "[ok]      $topic"
   else
-    echo "[warn] topic missing: $topic"
+    echo "[missing] $topic"
   fi
 }
 
-check_topic /cmd_vel
-check_topic /scan
-check_topic /oak/rgb/image_raw
+echo
+echo "[ros] core sensor topics:"
+check_topic /scan_filtered
+check_topic /oak/points
+check_topic /range/fl
+check_topic /range/fr
+check_topic /range/rl
+check_topic /range/rr
+check_topic /rosbot_base_controller/odom
+check_topic /imu_broadcaster/imu
 
 echo
-echo "[ros] /cmd_vel info"
-ros2 topic info /cmd_vel 2>/dev/null || echo "[warn] /cmd_vel info unavailable"
+echo "[ros] all range/ToF topics found:"
+printf '%s\n' "$topics" | grep -E 'range|tof|vl53|distance' || echo "  (none — run: sudo rosbot.flash)"
+
+echo
+echo "[hint] If /range/* are missing:  sudo rosbot.flash && sudo snap restart rosbot"
+echo "[hint] To build and run:          bash tools/run_project_c_full.sh"
