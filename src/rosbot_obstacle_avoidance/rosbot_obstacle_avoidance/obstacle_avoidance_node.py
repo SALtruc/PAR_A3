@@ -113,7 +113,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('front_tof_obstacle_distance', 0.30)
         self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('dodge_clearance', 0.03)
-        self.declare_parameter('rear_stop_distance', 0.20)
+        self.declare_parameter('rear_stop_distance', 0.12)
         self.declare_parameter('side_guard_distance', 0.03)
         self.declare_parameter('side_escape_distance', 0.05)
         self.declare_parameter('side_escape_angular_speed', 0.30)
@@ -276,9 +276,10 @@ class ObstacleAvoidanceNode(Node):
         self.create_subscription(Imu, imu_topic, self._on_imu, 10)
         self._cmd_pub = self.create_publisher(vel_type, cmd_vel_topic, 10)
         self._state_pub = self.create_publisher(String, state_topic, 10)
-        self.create_timer(1.0 / max(hz, 1.0), self._loop)
+        # self.create_timer(1.0 / max(hz, 1.0), self._loop)
+        self.create_timer(2.0, self._loop)
 
-        self._print_detection_summary()
+        # self._print_detection_summary()
 
     # ---------------------------------------------------------------------
     # Startup detection summary
@@ -457,85 +458,92 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
-        # Continue active manoeuvres first.
-        if self._state == OBSERVE and self._handle_observe(twist, snap, front):
-            self._log('observe', snap)
-            self._publish_cmd(twist)
-            return
+        # # Continue active manoeuvres first.
+        # if self._state == OBSERVE and self._handle_observe(twist, snap, front):
+        #     self._log('observe', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        if self._state == DODGE and self._handle_dodge(twist, snap, front, now):
-            self._log('dodge', snap)
-            self._publish_cmd(twist)
-            return
+        # if self._state == DODGE and self._handle_dodge(twist, snap, front, now):
+        #     self._log('dodge', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        if self._state == SIDE_ESCAPE and self._handle_side_escape(twist, snap, now):
-            self._log('side_escape', snap)
-            self._publish_cmd(twist)
-            return
+        # if self._state == SIDE_ESCAPE and self._handle_side_escape(twist, snap, now):
+        #     self._log('side_escape', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        if self._state == EDGE_ESCAPE and self._handle_edge_escape(twist, snap, now):
-            self._log('edge_escape', snap)
-            self._publish_cmd(twist)
-            return
+        # if self._state == EDGE_ESCAPE and self._handle_edge_escape(twist, snap, now):
+        #     self._log('edge_escape', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        if self._state == BACKUP and self._handle_backup(twist, snap, now):
-            self._log('backup', snap)
-            self._publish_cmd(twist)
-            return
+        # if self._state == BACKUP and self._handle_backup(twist, snap, now):
+        #     self._log('backup', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        if self._state == ROTATE and self._handle_rotate(twist, snap, front, now):
-            self._log('rotate', snap)
-            self._publish_cmd(twist)
-            return
+        # if self._state == ROTATE and self._handle_rotate(twist, snap, front, now):
+        #     self._log('rotate', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        # Priority 1: near edge snag. If one side is clearly open, pivot out
-        # before falling back to backup. This handles wall lips / hanging cloth.
-        if self._edge_escape_needed(snap, front):
-            self._start_edge_escape(snap)
-            self._handle_edge_escape(twist, snap, now)
-            self._log('edge_escape_start', snap)
-            self._publish_cmd(twist)
-            return
+        # # Priority 1: near edge snag. If one side is clearly open, pivot out
+        # # before falling back to backup. This handles wall lips / hanging cloth.
+        # if self._edge_escape_needed(snap, front):
+        #     self._start_edge_escape(snap)
+        #     self._handle_edge_escape(twist, snap, now)
+        #     self._log('edge_escape_start', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        # Priority 2: too close = backup, not dodge.
-        if self._too_close(snap):
-            self._start_backup()
-            self._handle_backup(twist, snap, now)
-            self._log('too_close_backup', snap)
-            self._publish_cmd(twist)
-            return
+        # # Priority 2: too close = backup, not dodge.
+        # if self._too_close(snap):
+        #     self._start_backup()
+        #     self._handle_backup(twist, snap, now)
+        #     self._log('too_close_backup', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        # Priority 3: true dead-end = backup then rotate.
-        if self._dead_end(snap, front):
-            self._start_backup()
-            self._handle_backup(twist, snap, now)
-            self._log('dead_end_backup', snap)
-            self._publish_cmd(twist)
-            return
+        # # Priority 3: true dead-end = backup then rotate.
+        # if self._dead_end(snap, front):
+        #     self._start_backup()
+        #     self._handle_backup(twist, snap, now)
+        #     self._log('dead_end_backup', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        # Priority 4: suspicious front object = observe first.
-        if self._front_suspicious(snap, front):
-            self._start_observe()
-            self._handle_observe(twist, snap, front)
-            self._log('observe_start', snap)
-            self._publish_cmd(twist)
-            return
+        # # Priority 4: suspicious front object = observe first.
+        # if self._front_suspicious(snap, front):
+        #     self._start_observe()
+        #     self._handle_observe(twist, snap, front)
+        #     self._log('observe_start', snap)
+        #     self._publish_cmd(twist)
+        #     return
 
-        # Priority 5: side collision guard. This is not corridor centering;
-        # it only prevents scraping/hitting when the forward path is clear.
-        if self._side_danger(snap):
-            self._start_side_escape(snap)
-            self._handle_side_escape(twist, snap, now)
-            self._log('side_guard_escape', snap)
-            self._publish_cmd(twist)
-            return
+        # # Priority 5: side collision guard. This is not corridor centering;
+        # # it only prevents scraping/hitting when the forward path is clear.
+        # if self._side_danger(snap):
+        #     self._start_side_escape(snap)
+        #     self._handle_side_escape(twist, snap, now)
+        #     self._log('side_guard_escape', snap)
+        #     self._publish_cmd(twist)
+        #     return
+
+        front_blocked = front <= self._clear and not self._depth_confirms_clear(snap)
+        left_blocked = math.isfinite(snap.left) and snap.left < self._dodge_clear
+        right_blocked = math.isfinite(snap.right) and snap.right < self._dodge_clear
+        rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
 
         # Default: straight drive. Side readings do not steer the robot.
         self._set_state(DRIVE)
-        twist.linear.x = self._max_speed
-        twist.angular.z = 0.0
-        self._log('drive_straight', snap)
-        self._publish_cmd(twist)
+        # twist.linear.x = self._max_speed
+        # twist.angular.z = 0.0
+        self._log(str([front_blocked, left_blocked, right_blocked, rear_blocked]), snap)
+        # self._publish_cmd(twist)
+        self.get_logger().info(json.dumps(self._raw_obs, indent=4, ensure_ascii=False))
+        
 
     # ---------------------------------------------------------------------
     # State handlers
@@ -931,6 +939,50 @@ class ObstacleAvoidanceNode(Node):
         depth_ok = bool(depth.get('available', False))
         emergency = bool(fused.get('emergency', False))
         tof_emergency = bool(emergency and 'tof' in source)
+        
+        
+         # Front is genuinely blocked only when:
+        # - perception says blocked (uses its own validated logic), OR
+        # - close_count is HIGH relative to total samples (many rays hitting it)
+        front_control_raw = _finite(lidar.get('front_control', fused.get('front_distance')))
+        front_close_count = int(lidar.get('front_close_count', 0))
+        perception_blocked = bool(fused.get('blocked', False))
+        front_samples = max(1, int(lidar.get('front_samples', 1)))
+        close_fraction = front_close_count / front_samples   # 0.0 to 1.0+
+
+        # Side bleed: close_fraction=0.418 (side wall fills ~42% of front sector)
+        # Real front obstacle: close_fraction would be MUCH higher (wall fills full sector)
+        # Use 0.70 as threshold: at least 70% of front rays must be close
+        real_front_obstacle = perception_blocked or close_fraction >= 0.70
+
+        if not real_front_obstacle:
+            front_lidar = math.inf
+        else:
+            front_lidar = front_control_raw
+
+        # Fix mirrored
+        # Based on what are observed
+        # -> Right and left are physically swapped
+        left  = _finite(fused.get('right_distance'))
+        right = _finite(fused.get('left_distance'))
+
+        # rear_distance can include chassis self-reflection at 15–16cm
+        rear = _finite(lidar.get('rear_mean', fused.get('rear_distance')))
+        
+        return Snap(
+            front_lidar  = front_lidar,
+            front_depth  = _finite(depth.get('front_min')),
+            front_tof    = self._front_tof_distance(tof),
+            left         = left,
+            right        = right,
+            rear         = rear,
+            dynamic      = bool(fused.get('dynamic_obstacle', False)
+                                or depth.get('motion', False)),
+            emergency    = emergency,
+            tof_emergency = tof_emergency,
+            lidar_ok     = lidar_ok,
+            depth_ok     = depth_ok,
+        )
 
         return Snap(
             front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
