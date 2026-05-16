@@ -103,11 +103,11 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.5)
+        self.declare_parameter('max_speed', 0.30)
         self.declare_parameter('observe_speed', 0.0)
-        self.declare_parameter('dodge_forward_speed', 0.045)
-        self.declare_parameter('dodge_angular_speed', 0.45)
-        self.declare_parameter('rotation_angular_speed', 0.50)
+        self.declare_parameter('dodge_forward_speed', 0.060)
+        self.declare_parameter('dodge_angular_speed', 0.55)
+        self.declare_parameter('rotation_angular_speed', 0.60)
         self.declare_parameter('backup_speed', 0.08)
 
         # Distances, metres
@@ -120,12 +120,12 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.03)
         self.declare_parameter('side_escape_distance', 0.05)
-        self.declare_parameter('side_escape_angular_speed', 0.30)
+        self.declare_parameter('side_escape_angular_speed', 0.38)
         self.declare_parameter('side_escape_sec', 0.45)
         self.declare_parameter('edge_escape_enabled', True)
         self.declare_parameter('edge_escape_front_distance', 0.15)
         self.declare_parameter('edge_escape_clearance', 0.30)
-        self.declare_parameter('edge_escape_angular_speed', 0.45)
+        self.declare_parameter('edge_escape_angular_speed', 0.55)
         self.declare_parameter('edge_escape_sec', 0.80)
         self.declare_parameter('edge_escape_max_attempts', 3)
         self.declare_parameter('dynamic_observe_distance', 0.80)
@@ -145,7 +145,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('avoid_turn_direction', -1.0)
 
         # Static approach + dynamic timeout
-        self.declare_parameter('creep_speed', 0.04)
+        self.declare_parameter('creep_speed', 0.055)
         self.declare_parameter('dynamic_timeout_sec', 5.0)
         self.declare_parameter('dynamic_close_distance', 0.20)
 
