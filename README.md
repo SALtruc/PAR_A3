@@ -28,7 +28,7 @@ src/
     │   ├── obstacle_perception_node.py
     │   ├── obstacle_avoidance_node.py
     │   └── obstacle_trial_logger_node.py
-    ├── launch/project_c.launch.py
+    ├── launch/project_c_safety.launch.py
     └── config/params.yaml
 tools/
 ├── generate_qr_codes.py           # prints QR PNGs for all commands

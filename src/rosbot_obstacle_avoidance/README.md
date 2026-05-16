@@ -29,13 +29,23 @@ current fused sensor snapshot.
 ## Run
 
 ```bash
-ros2 launch rosbot_obstacle_avoidance project_c.launch.py \
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:=/scan_filtered \
   pointcloud_topic:=/oak/points \
-  cmd_vel_topic:=/cmd_vel
+  cmd_vel_topic:=/cmd_vel \
+  use_nav2_collision_monitor:=true \
+  max_speed:=0.10 \
+  backup_speed:=0.04 \
+  require_battery_ok:=true
 ```
 
-Safer low-speed run:
+Use this as the real-robot safety run after confirming `/battery`,
+`/scan_filtered`, and `/oak/points` are publishing. The controller publishes to
+`/cmd_vel_raw`; Nav2 Collision Monitor checks stop/slow zones and publishes the
+final command to `/cmd_vel`.
+
+If Nav2 Collision Monitor is not installed or does not start on the robot, use
+the same safety launch without the Nav2 layer:
 
 ```bash
 ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
@@ -43,28 +53,12 @@ ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   pointcloud_topic:=/oak/points \
   cmd_vel_topic:=/cmd_vel \
   max_speed:=0.06 \
-  backup_speed:=0.04
+  backup_speed:=0.04 \
+  use_nav2_collision_monitor:=false
 ```
 
-By default this launches the Project C custom safety policy directly to
-`/cmd_vel`, avoiding a dead command path if optional Nav2 packages are missing
-or ABI-incompatible. It also requires a fresh `/battery` reading above
-`min_battery_voltage` before allowing motion.
-
-Optional Nav2 Collision Monitor layer:
-
-```bash
-ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
-  scan_topic:=/scan_filtered \
-  pointcloud_topic:=/oak/points \
-  cmd_vel_topic:=/cmd_vel \
-  use_nav2_collision_monitor:=true
-```
-
-With `use_nav2_collision_monitor:=true`, the custom controller publishes to
-`/cmd_vel_raw`. Collision Monitor checks velocity-dependent stop/slow zones
-using `/scan_filtered` and `/oak/points`, then publishes the final command to
-`/cmd_vel`.
+This package keeps only `project_c_safety.launch.py` as the Project C launch
+entrypoint.
 
 Useful topics:
 
@@ -98,13 +92,13 @@ or below `min_battery_voltage`.
 LIDAR-only trial:
 
 ```bash
-ros2 launch rosbot_obstacle_avoidance project_c.launch.py use_depth:=false
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=false
 ```
 
 LIDAR + depth trial:
 
 ```bash
-ros2 launch rosbot_obstacle_avoidance project_c.launch.py use_pointcloud:=true
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=true use_pointcloud:=true
 ```
 
 Compare the CSV files for collision rate, dynamic response latency, recovery

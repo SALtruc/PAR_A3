@@ -18,11 +18,16 @@ least five minutes without human joystick control.
 ## Run
 
 ```bash
-ros2 launch rosbot_obstacle_avoidance project_c.launch.py \
-  scan_topic:=/scan \
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
+  scan_topic:=/scan_filtered \
   depth_topic:=/camera/depth/image_rect_raw \
   tof_topic:=/range \
-  cmd_vel_topic:=/cmd_vel
+  pointcloud_topic:=/oak/points \
+  cmd_vel_topic:=/cmd_vel \
+  use_nav2_collision_monitor:=true \
+  max_speed:=0.10 \
+  backup_speed:=0.04 \
+  require_battery_ok:=true
 ```
 
 Watch:
@@ -44,10 +49,10 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 
 ```bash
 # LIDAR + ToF only
-ros2 launch rosbot_obstacle_avoidance project_c.launch.py use_depth:=false
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=false
 
 # LIDAR + depth + ToF
-ros2 launch rosbot_obstacle_avoidance project_c.launch.py use_depth:=true
+ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py use_depth:=true
 ```
 
 ## Tuning Order
