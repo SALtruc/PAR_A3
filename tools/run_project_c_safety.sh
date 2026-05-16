@@ -29,10 +29,12 @@ unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH ROS_PACKAGE_PATH
 # ROS setup files below will repopulate them in the right order.
 unset LD_LIBRARY_PATH PYTHONPATH
 
+set +u
 # shellcheck source=/dev/null
 source "/opt/ros/${DISTRO}/setup.bash"
 # shellcheck source=/dev/null
 source "${ROOT}/install/setup.bash"
+set -u
 
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
 if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then

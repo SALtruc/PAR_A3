@@ -22,8 +22,10 @@ rm -rf \
 # Avoid accidentally building against another workspace sourced by .bashrc.
 unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH ROS_PACKAGE_PATH
 
+set +u
 # shellcheck source=/dev/null
 source "/opt/ros/${DISTRO}/setup.bash"
+set -u
 
 colcon build --symlink-install \
   --base-paths src \
