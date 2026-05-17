@@ -73,7 +73,7 @@ def generate_launch_description():
         DeclareLaunchArgument('perception_obstacle_distance', default_value='0.22'),
         DeclareLaunchArgument('perception_clear_distance', default_value='0.35'),
         DeclareLaunchArgument('clear_distance', default_value='0.35'),  # side clearance
-        DeclareLaunchArgument('stop_distance', default_value='0.25'),   # front
+        DeclareLaunchArgument('stop_distance', default_value='0.15'),   # front
         DeclareLaunchArgument('hard_backup_distance', default_value='0.10'),
         DeclareLaunchArgument('front_tof_obstacle_distance', default_value='0.12'),
         DeclareLaunchArgument('front_tof_hard_distance', default_value='0.12'),
