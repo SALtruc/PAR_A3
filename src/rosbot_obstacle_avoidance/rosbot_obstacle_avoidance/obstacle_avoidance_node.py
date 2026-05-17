@@ -111,8 +111,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('backup_speed', 0.08)
 
         # Distances, metres
-        self.declare_parameter('clear_distance', 0.35)  # side clearance
-        self.declare_parameter('stop_distance', 0.15)   # front
+        self.declare_parameter('clear_distance', 0.55)  # side clearance
+        self.declare_parameter('stop_distance', 0.35)   # front
         self.declare_parameter('hard_backup_distance', 0.10)
         self.declare_parameter('front_tof_obstacle_distance', 0.12)
         self.declare_parameter('front_tof_hard_distance', 0.12)
