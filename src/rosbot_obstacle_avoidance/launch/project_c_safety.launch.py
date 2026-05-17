@@ -71,8 +71,8 @@ def generate_launch_description():
         DeclareLaunchArgument('max_speed', default_value='0.22'),   # speed
         DeclareLaunchArgument('emergency_distance', default_value='0.14'),
         DeclareLaunchArgument('perception_obstacle_distance', default_value='0.22'),
-        DeclareLaunchArgument('perception_clear_distance', default_value='0.35'),   # side clearance
-        DeclareLaunchArgument('clear_distance', default_value='0.35'),
+        DeclareLaunchArgument('perception_clear_distance', default_value='0.35'),
+        DeclareLaunchArgument('clear_distance', default_value='0.35'),  # side clearance
         DeclareLaunchArgument('stop_distance', default_value='0.25'),   # front
         DeclareLaunchArgument('hard_backup_distance', default_value='0.10'),
         DeclareLaunchArgument('front_tof_obstacle_distance', default_value='0.12'),
@@ -93,7 +93,7 @@ def generate_launch_description():
         DeclareLaunchArgument('corner_backup_front_distance', default_value='0.35'),
         DeclareLaunchArgument('corner_backup_both_sides_distance', default_value='0.10'),
         DeclareLaunchArgument('observe_speed', default_value='0.0'),
-        DeclareLaunchArgument('dodge_forward_speed', default_value='0.045'),
+        DeclareLaunchArgument('dodge_forward_speed', default_value='0.045'),    # force?
         DeclareLaunchArgument('dodge_angular_speed', default_value='0.55'),
         DeclareLaunchArgument('rotation_angular_speed', default_value='0.60'),
         DeclareLaunchArgument('backup_speed', default_value='0.08'),
@@ -107,7 +107,7 @@ def generate_launch_description():
         DeclareLaunchArgument('clear_observe_frames', default_value='3'),
         DeclareLaunchArgument('front_release_distance', default_value='0.45'),
         DeclareLaunchArgument('front_clear_exit_frames', default_value='5'),
-        DeclareLaunchArgument('creep_speed', default_value='0.040'),    # push
+        DeclareLaunchArgument('creep_speed', default_value='0.040'),    # force?
         DeclareLaunchArgument('surprise_backup_enabled', default_value='true'),
         DeclareLaunchArgument('surprise_backup_distance', default_value='0.20'),
         DeclareLaunchArgument('surprise_backup_sec', default_value='0.45'),

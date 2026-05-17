@@ -103,16 +103,16 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.22)
+        self.declare_parameter('max_speed', 0.22)   # speed
         self.declare_parameter('observe_speed', 0.0)
-        self.declare_parameter('dodge_forward_speed', 0.045)
+        self.declare_parameter('dodge_forward_speed', 0.045)    # force?
         self.declare_parameter('dodge_angular_speed', 0.55)
         self.declare_parameter('rotation_angular_speed', 0.60)
         self.declare_parameter('backup_speed', 0.08)
 
         # Distances, metres
-        self.declare_parameter('clear_distance', 0.45)
-        self.declare_parameter('stop_distance', 0.25)
+        self.declare_parameter('clear_distance', 0.45)  # side clearance
+        self.declare_parameter('stop_distance', 0.25)   # front
         self.declare_parameter('hard_backup_distance', 0.10)
         self.declare_parameter('front_tof_obstacle_distance', 0.12)
         self.declare_parameter('front_tof_hard_distance', 0.12)
@@ -148,7 +148,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('avoid_turn_direction', -1.0)
 
         # Static approach + dynamic timeout
-        self.declare_parameter('creep_speed', 0.040)
+        self.declare_parameter('creep_speed', 0.040)    # force?
         self.declare_parameter('dynamic_timeout_sec', 5.0)
         self.declare_parameter('dynamic_close_distance', 0.20)
         self.declare_parameter('surprise_backup_enabled', True)
