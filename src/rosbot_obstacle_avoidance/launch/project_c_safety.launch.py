@@ -68,12 +68,12 @@ def generate_launch_description():
         DeclareLaunchArgument('imu_topic', default_value='/imu'),
         DeclareLaunchArgument('front_tof_topics', default_value='/range/fl,/range/fr'),
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
-        DeclareLaunchArgument('max_speed', default_value='0.22'),
+        DeclareLaunchArgument('max_speed', default_value='0.22'),   # speed
         DeclareLaunchArgument('emergency_distance', default_value='0.14'),
         DeclareLaunchArgument('perception_obstacle_distance', default_value='0.22'),
-        DeclareLaunchArgument('perception_clear_distance', default_value='0.35'),
+        DeclareLaunchArgument('perception_clear_distance', default_value='0.35'),   # side clearance
         DeclareLaunchArgument('clear_distance', default_value='0.35'),
-        DeclareLaunchArgument('stop_distance', default_value='0.25'),
+        DeclareLaunchArgument('stop_distance', default_value='0.25'),   # front
         DeclareLaunchArgument('hard_backup_distance', default_value='0.10'),
         DeclareLaunchArgument('front_tof_obstacle_distance', default_value='0.12'),
         DeclareLaunchArgument('front_tof_hard_distance', default_value='0.12'),
@@ -107,7 +107,7 @@ def generate_launch_description():
         DeclareLaunchArgument('clear_observe_frames', default_value='3'),
         DeclareLaunchArgument('front_release_distance', default_value='0.45'),
         DeclareLaunchArgument('front_clear_exit_frames', default_value='5'),
-        DeclareLaunchArgument('creep_speed', default_value='0.040'),
+        DeclareLaunchArgument('creep_speed', default_value='0.040'),    # push
         DeclareLaunchArgument('surprise_backup_enabled', default_value='true'),
         DeclareLaunchArgument('surprise_backup_distance', default_value='0.20'),
         DeclareLaunchArgument('surprise_backup_sec', default_value='0.45'),
