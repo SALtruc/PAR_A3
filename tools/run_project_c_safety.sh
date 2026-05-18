@@ -140,6 +140,8 @@ depth_has_sample() {
     || timeout 5 ros2 topic hz "$topic" --qos-reliability best_effort 2>/dev/null \
     | grep -q 'average rate:' \
     || timeout 5 ros2 topic hz "$topic" --qos-reliability reliable 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 5 ros2 topic hz "$topic" 2>/dev/null \
     | grep -q 'average rate:'
 }
 
@@ -160,6 +162,8 @@ pointcloud_has_sample() {
     || timeout 5 ros2 topic hz "$topic" --qos-profile sensor_data 2>/dev/null \
     | grep -q 'average rate:' \
     || timeout 5 ros2 topic hz "$topic" --qos-reliability best_effort 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 5 ros2 topic hz "$topic" 2>/dev/null \
     | grep -q 'average rate:'
 }
 

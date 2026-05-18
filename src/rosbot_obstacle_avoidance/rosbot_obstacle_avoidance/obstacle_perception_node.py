@@ -754,7 +754,7 @@ class ObstaclePerceptionNode(Node):
         if msg.height > 1 and msg.width > 1:
             stride = self._pointcloud_roi_stride_px
             uvs = [
-                (u, v)
+                v * msg.width + u
                 for v in range(0, msg.height, stride)
                 for u in range(0, msg.width, stride)
             ]

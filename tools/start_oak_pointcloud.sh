@@ -178,6 +178,8 @@ pointcloud_message_ready() {
     || timeout 6 ros2 topic hz "$topic" --qos-profile sensor_data 2>/dev/null \
     | grep -q 'average rate:' \
     || timeout 6 ros2 topic hz "$topic" --qos-reliability best_effort 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 6 ros2 topic hz "$topic" 2>/dev/null \
     | grep -q 'average rate:'
 }
 

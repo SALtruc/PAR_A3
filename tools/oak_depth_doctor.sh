@@ -71,7 +71,9 @@ topic_rate_ready() {
   local output
   output="$(timeout "$WAIT_SEC" ros2 topic hz "$topic" "$@" 2>&1 || true)"
   if printf '%s\n' "$output" | grep -q 'average rate:'; then
-    printf '%s\n' "$output" | grep 'average rate:' | tail -n 1 | sed "s/^/[ok] $topic /"
+    local rate_line
+    rate_line="$(printf '%s\n' "$output" | grep 'average rate:' | tail -n 1)"
+    printf '[ok] %s %s\n' "$topic" "$rate_line"
     return 0
   fi
   if printf '%s\n' "$output" | grep -Eiq 'segmentation fault|core dumped'; then
@@ -84,7 +86,8 @@ depth_ready() {
   local topic="$1"
   topic_rate_ready "$topic" --qos-profile sensor_data \
     || topic_rate_ready "$topic" --qos-reliability best_effort \
-    || topic_rate_ready "$topic" --qos-reliability reliable
+    || topic_rate_ready "$topic" --qos-reliability reliable \
+    || topic_rate_ready "$topic"
 }
 
 pointcloud_ready() {
@@ -92,7 +95,8 @@ pointcloud_ready() {
   topic_rate_ready "$topic" --qos-reliability reliable --qos-durability transient_local \
     || topic_rate_ready "$topic" --qos-reliability reliable \
     || topic_rate_ready "$topic" --qos-profile sensor_data \
-    || topic_rate_ready "$topic" --qos-reliability best_effort
+    || topic_rate_ready "$topic" --qos-reliability best_effort \
+    || topic_rate_ready "$topic"
 }
 
 topics_with_types="$(list_topics)"
