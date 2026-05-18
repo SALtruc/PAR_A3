@@ -73,7 +73,7 @@ esac
 # disabled so discovery uses unicast peer-to-peer (matching FastRTPS config).
 # All other snaps also run on the same machine so loopback is sufficient.
 if [ -z "${CYCLONEDDS_URI:-}" ]; then
-  export CYCLONEDDS_URI='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo"/></Interfaces><Discovery><ParticipantIndex>auto</ParticipantIndex></Discovery></General></Domain></CycloneDDS>'
+  export CYCLONEDDS_URI='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo"/></Interfaces></General></Domain></CycloneDDS>'
   echo "[ok] CYCLONEDDS_URI=loopback/unicast (matching depthai FastRTPS udp-lo profile)"
 else
   echo "[ok] CYCLONEDDS_URI (user-defined): ${CYCLONEDDS_URI}"
