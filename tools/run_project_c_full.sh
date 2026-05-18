@@ -19,6 +19,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESTART_SNAPS="${PROJECT_C_RESTART_SNAPS:-true}"
 CHECK_ATTEMPTS="${PROJECT_C_CHECK_ATTEMPTS:-15}"
 CHECK_SLEEP_SEC="${PROJECT_C_CHECK_SLEEP_SEC:-5}"
+RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 
 cd "$ROOT"
 
@@ -92,6 +93,8 @@ wait_for_full_fusion() {
   snap services 2>/dev/null | grep -E 'rosbot|rplidar|depthai' || true
   echo
   echo "[diag] Current range/ToF topics:"
+  export RMW_IMPLEMENTATION
+  ros2 daemon stop >/dev/null 2>&1 || true
   ros2 topic list 2>/dev/null | sort | grep -E 'range|tof|vl53|distance' || echo "  (none)"
   echo
   echo "[diag] Recent rosbot snap logs:"

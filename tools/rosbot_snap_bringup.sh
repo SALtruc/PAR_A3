@@ -9,6 +9,7 @@
 set -u
 
 WAIT_SEC="${WAIT_SEC:-12}"
+RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 
 # ── snap helpers ───────────────────────────────────────────────────────────────
 
@@ -70,6 +71,9 @@ if ! command -v ros2 >/dev/null 2>&1; then
   echo "[warn] ros2 not found after sourcing ROS — skipping topic checks"
   exit 0
 fi
+
+export RMW_IMPLEMENTATION
+ros2 daemon stop >/dev/null 2>&1 || true
 
 topics="$(timeout 8 ros2 topic list 2>/dev/null || true)"
 

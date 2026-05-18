@@ -13,6 +13,9 @@ RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 # Match the run script. Local-only can hide ROSbot firmware/sensor topics on
 # the lab image, so it is opt-in instead of default.
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
+# Reset the CLI daemon by default so checks do not reuse a daemon started with
+# the wrong RMW implementation.
+PROJECT_C_RESET_ROS2_DAEMON="${PROJECT_C_RESET_ROS2_DAEMON:-true}"
 # Project C assessment mode requires all robot sensors. Set this false only for
 # degraded demos where LIDAR/OAK are enough and ToF is intentionally disabled.
 PROJECT_C_REQUIRE_FULL_FUSION="${PROJECT_C_REQUIRE_FULL_FUSION:-true}"
@@ -51,6 +54,12 @@ source "/opt/ros/${DISTRO}/setup.bash"
 source "${ROOT}/install/setup.bash"
 set -u
 export RMW_IMPLEMENTATION
+
+case "${PROJECT_C_RESET_ROS2_DAEMON,,}" in
+  1|true|yes|on)
+    ros2 daemon stop >/dev/null 2>&1 || true
+    ;;
+esac
 
 case "${PROJECT_C_LOCAL_ONLY,,}" in
   1|true|yes|on)

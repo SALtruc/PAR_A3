@@ -17,6 +17,9 @@ RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 # Keep this off by default because ROSbot firmware/sensor participants may be
 # exposed through robot-local network namespaces instead of localhost.
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
+# Reset the CLI daemon by default so an old daemon started from a shell using
+# FastRTPS cannot keep poisoning ros2 graph commands.
+PROJECT_C_RESET_ROS2_DAEMON="${PROJECT_C_RESET_ROS2_DAEMON:-true}"
 
 if [ ! -f "/opt/ros/${DISTRO}/setup.bash" ]; then
   echo "[error] /opt/ros/${DISTRO}/setup.bash not found."
@@ -46,6 +49,12 @@ source "/opt/ros/${DISTRO}/setup.bash"
 source "${ROOT}/install/setup.bash"
 set -u
 export RMW_IMPLEMENTATION
+
+case "${PROJECT_C_RESET_ROS2_DAEMON,,}" in
+  1|true|yes|on)
+    ros2 daemon stop >/dev/null 2>&1 || true
+    ;;
+esac
 
 case "${PROJECT_C_LOCAL_ONLY,,}" in
   1|true|yes|on)

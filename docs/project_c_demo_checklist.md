@@ -17,6 +17,24 @@ least five minutes without human joystick control.
 
 ## Run
 
+Use the repo wrapper on the robot for the live demo. It selects CycloneDDS and
+resets the ROS 2 CLI daemon inside the script, so you do not need to export
+`RMW_IMPLEMENTATION` manually in your shell:
+
+```bash
+cd ~/PAR_A3
+bash tools/run_project_c_full.sh
+```
+
+Keep the laptop as an SSH client only during the run. Do not run local laptop
+`ros2 topic list`, `ros2 topic echo`, RViz, or Foxglove directly on the same
+ROS domain during the timed demo; those make the laptop a DDS participant and
+can stall discovery or high-bandwidth OAK traffic on the lab network. If you
+need a monitor, open a second SSH terminal and run the watch commands on the
+robot.
+
+If you must use a manual launch instead of the wrapper, run it on the robot:
+
 ```bash
 ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:=/scan_filtered \

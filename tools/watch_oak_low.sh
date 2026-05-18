@@ -32,6 +32,7 @@ source "/opt/ros/${DISTRO}/setup.bash"
 source "${ROOT}/install/setup.bash"
 set -u
 export RMW_IMPLEMENTATION
+ros2 daemon stop >/dev/null 2>&1 || true
 
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
 if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then
