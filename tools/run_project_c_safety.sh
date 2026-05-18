@@ -89,6 +89,7 @@ fi
 echo "[ok] Using package: $actual_prefix"
 echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
 echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
+echo "[ok] ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-<unset>}"
 if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1" ]; then
   echo "[ok] ROS discovery is restricted to localhost"
 fi
@@ -151,7 +152,14 @@ case "${USE_POINTCLOUD_ARG,,}" in
     ;;
   1|true|yes|on)
     USE_POINTCLOUD_ARG=true
-    topics_with_types="$(list_topics_with_types)"
+    for attempt in 1 2 3 4 5; do
+      topics_with_types="$(list_topics_with_types)"
+      if [ -z "$topics_with_types" ] || topic_is_pointcloud "$POINTCLOUD_TOPIC_ARG" "$topics_with_types"; then
+        break
+      fi
+      echo "[wait] Requested pointcloud topic not visible yet: $POINTCLOUD_TOPIC_ARG (${attempt}/5)"
+      sleep 1
+    done
     if [ -n "$topics_with_types" ] && ! topic_is_pointcloud "$POINTCLOUD_TOPIC_ARG" "$topics_with_types"; then
       candidate="$(first_pointcloud_topic "$topics_with_types" || true)"
       if [ -z "${POINTCLOUD_TOPIC+x}" ] && [ -n "$candidate" ]; then
@@ -159,6 +167,9 @@ case "${USE_POINTCLOUD_ARG,,}" in
         POINTCLOUD_TOPIC_ARG="$candidate"
       else
         echo "[warn] Requested pointcloud topic is not visible: $POINTCLOUD_TOPIC_ARG"
+        echo "[info] Visible PointCloud2 topics:"
+        printf '%s\n' "$topics_with_types" \
+          | awk 'index($0, "[sensor_msgs/msg/PointCloud2]") { print "       " $0 }'
       fi
     fi
     ;;
@@ -178,7 +189,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
   depth_topic:="${DEPTH_TOPIC:-/oak/stereo/image_raw}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC_ARG}" \
-  pointcloud_qos:="${POINTCLOUD_QOS:-reliable_transient_local}" \
+  pointcloud_qos:="${POINTCLOUD_QOS:-auto}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
   tof_msg_type:="${TOF_MSG_TYPE:-scan}" \
   front_tof_topics:="${FRONT_TOF_TOPICS:-/range/fl,/range/fr}" \
