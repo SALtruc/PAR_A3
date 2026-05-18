@@ -167,6 +167,7 @@ class ObstaclePerceptionNode(Node):
 
         scan_topic = self.get_parameter('scan_topic').value
         depth_topic = self.get_parameter('depth_topic').value
+        self._depth_topic = depth_topic
         pointcloud_topic = self.get_parameter('pointcloud_topic').value
         tof_topic = self.get_parameter('tof_topic').value
         tof_topics = _split_topics(self.get_parameter('tof_topics').value)
@@ -434,6 +435,7 @@ class ObstaclePerceptionNode(Node):
         self._tf_buffer = None
         self._tf_listener = None
         self._last_pointcloud_warn = 0.0
+        self._last_depth_warn = 0.0
         self._pointcloud_subscription_labels: list[str] = []
 
         if self._use_pointcloud and self._pointcloud_use_tf:
@@ -808,6 +810,12 @@ class ObstaclePerceptionNode(Node):
             self._last_pointcloud_warn = now
             self.get_logger().warn(text)
 
+    def _warn_depth(self, text: str):
+        now = time.monotonic()
+        if now - self._last_depth_warn >= 2.0:
+            self._last_depth_warn = now
+            self.get_logger().warn(text)
+
     @staticmethod
     def _transform_point_axes(x: float, y: float, z: float, transform) -> tuple[float, float, float]:
         q = transform.rotation
@@ -978,6 +986,15 @@ class ObstaclePerceptionNode(Node):
             self._warn_pointcloud(
                 'No PointCloud2 messages received yet. Check '
                 'ros2 topic type /oak/points and ros2 topic hz /oak/points.'
+            )
+        if (
+                self._use_depth
+                and self._last_depth_time is None
+                and now - self._start_time >= 5.0):
+            self._warn_depth(
+                f'No depth Image messages received from {self._depth_topic}. '
+                'Check CYCLONEDDS_URI or ros2 topic hz '
+                f'{self._depth_topic}.'
             )
         depth_recent = depth_image_recent or pointcloud_recent
         front_tof_range = self._tof_min_recent(self._front_tof_topics)
