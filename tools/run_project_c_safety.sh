@@ -93,8 +93,9 @@ if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1"
   echo "[ok] ROS discovery is restricted to localhost"
 fi
 
-DEPTH_TOPIC_ARG="${DEPTH_TOPIC:-/oak/stereo/image_raw}"
-POINTCLOUD_TOPIC_ARG="${POINTCLOUD_TOPIC:-/oak/points}"
+# OAK-D v3 topics (rs_compat driver). Override with env vars if needed.
+DEPTH_TOPIC_ARG="${DEPTH_TOPIC:-/camera/camera/depth/image_rect_raw}"
+POINTCLOUD_TOPIC_ARG="${POINTCLOUD_TOPIC:-/camera/camera/depth/color/points}"
 USE_DEPTH_ARG="${USE_DEPTH:-auto}"
 USE_POINTCLOUD_ARG="${USE_POINTCLOUD:-auto}"
 
@@ -332,6 +333,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   low_obstacle_backup_distance:="${LOW_OBSTACLE_BACKUP_DISTANCE:-0.12}" \
   pre_dodge_backup_enabled:="${PRE_DODGE_BACKUP_ENABLED:-true}" \
   pre_dodge_backup_sec:="${PRE_DODGE_BACKUP_SEC:-0.40}" \
+  pre_dodge_backup_clear_bonus_sec:="${PRE_DODGE_BACKUP_CLEAR_BONUS_SEC:-0.80}" \
   low_obstacle_min_points:="${LOW_OBSTACLE_MIN_POINTS:-20}" \
   side_escape_release_distance:="${SIDE_ESCAPE_RELEASE_DISTANCE:-0.08}" \
   side_escape_forward_speed:="${SIDE_ESCAPE_FORWARD_SPEED:-0.025}" \

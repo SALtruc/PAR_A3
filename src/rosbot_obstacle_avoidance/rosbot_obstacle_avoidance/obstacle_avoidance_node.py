@@ -126,6 +126,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('pre_dodge_backup_enabled', False)
         self.declare_parameter('pre_dodge_backup_sec', 0.40)
+        self.declare_parameter('pre_dodge_backup_clear_bonus_sec', 0.80)
         self.declare_parameter('dodge_clearance', 0.03)
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.03)
@@ -305,6 +306,9 @@ class ObstacleAvoidanceNode(Node):
         self._tilt_imu_stale = max(0.05, float(p('tilt_imu_stale_sec').value))
         self._pre_dodge_backup = _as_bool(p('pre_dodge_backup_enabled').value)
         self._pre_dodge_backup_sec = max(0.0, float(p('pre_dodge_backup_sec').value))
+        self._pre_dodge_backup_clear_bonus = max(
+            0.0, float(p('pre_dodge_backup_clear_bonus_sec').value)
+        )
         self._debug = _as_bool(p('debug_decisions').value)
         self._debug_period = float(p('debug_period_sec').value)
         self._creep_speed = float(p('creep_speed').value)
@@ -769,7 +773,7 @@ class ObstacleAvoidanceNode(Node):
         if self._low_obstacle_hit(snap):
             self._static_confirmed = False
             if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
-                self._start_backup(self._pre_dodge_backup_sec, then_dodge=True)
+                self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
                 return self._handle_backup(twist, snap, now)
             self._start_dodge(snap)
             return self._handle_dodge(twist, snap, front, now)
@@ -783,9 +787,10 @@ class ObstacleAvoidanceNode(Node):
 
         # At stop_distance: back up briefly so the dodge arc has side clearance,
         # then pivot. Needed because OAK can't see close side objects while turning.
+        # Extra time added when rear is clear so the arc has more room.
         self._static_confirmed = False
         if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
-            self._start_backup(self._pre_dodge_backup_sec, then_dodge=True)
+            self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
             return self._handle_backup(twist, snap, now)
         self._start_dodge(snap)
         return self._handle_dodge(twist, snap, front, now)
@@ -1029,6 +1034,12 @@ class ObstacleAvoidanceNode(Node):
     # ---------------------------------------------------------------------
     # Decision helpers
     # ---------------------------------------------------------------------
+
+    def _pre_dodge_backup_dur(self, snap: Snap) -> float:
+        """Backup duration before a dodge: longer when rear is clear."""
+        rear_clear = not (math.isfinite(snap.rear) and snap.rear < self._rear_stop)
+        bonus = self._pre_dodge_backup_clear_bonus if rear_clear else 0.0
+        return self._pre_dodge_backup_sec + bonus
 
     def _valid_oak_low(self, snap: Snap) -> bool:
         return (

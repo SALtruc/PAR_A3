@@ -136,6 +136,7 @@ obstacle_avoidance:
     # Needed because OAK can't see close side objects while turning.
     pre_dodge_backup_enabled: true
     pre_dodge_backup_sec: 0.40
+    pre_dodge_backup_clear_bonus_sec: 0.80  # extra backup when rear is unobstructed (~5 cm)
 
     dodge_clearance: 0.03      # min side clearance for dead-end recovery
     rear_stop_distance: 0.20
