@@ -121,8 +121,12 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.03)
         self.declare_parameter('side_escape_distance', 0.03)
+        self.declare_parameter('side_escape_release_distance', 0.08)
+        self.declare_parameter('side_escape_forward_speed', 0.035)
         self.declare_parameter('side_escape_angular_speed', 0.30)
-        self.declare_parameter('side_escape_sec', 0.45)
+        self.declare_parameter('side_escape_counter_scale', 0.60)
+        self.declare_parameter('side_escape_sec', 0.75)
+        self.declare_parameter('side_escape_max_attempts', 4)
         self.declare_parameter('edge_escape_enabled', True)
         self.declare_parameter('edge_escape_front_distance', 0.15)
         self.declare_parameter('edge_escape_clearance', 0.30)
@@ -212,8 +216,25 @@ class ObstacleAvoidanceNode(Node):
         self._rear_stop = float(p('rear_stop_distance').value)
         self._side_guard = float(p('side_guard_distance').value)
         self._side_escape = float(p('side_escape_distance').value)
-        self._side_escape_ang = float(p('side_escape_angular_speed').value)
-        self._side_escape_sec = float(p('side_escape_sec').value)
+        self._side_escape_release = max(
+            self._side_escape,
+            self._side_guard,
+            float(p('side_escape_release_distance').value),
+        )
+        self._side_escape_forward = max(
+            0.0,
+            min(float(p('side_escape_forward_speed').value), self._max_speed * 0.5),
+        )
+        self._side_escape_ang = abs(float(p('side_escape_angular_speed').value))
+        self._side_escape_counter_scale = max(
+            0.0,
+            min(1.0, float(p('side_escape_counter_scale').value)),
+        )
+        self._side_escape_sec = max(0.0, float(p('side_escape_sec').value))
+        self._side_escape_max_attempts = max(
+            1,
+            int(p('side_escape_max_attempts').value),
+        )
         self._edge_escape_enabled = _as_bool(p('edge_escape_enabled').value)
         self._edge_escape_front = max(0.0, float(p('edge_escape_front_distance').value))
         self._edge_escape_clear = max(0.0, float(p('edge_escape_clearance').value))
@@ -279,6 +300,7 @@ class ObstacleAvoidanceNode(Node):
         self._front_clear_count = 0
         self._rotation_count = 0
         self._edge_escape_count = 0
+        self._side_escape_count = 0
         self._raw_obs = None
         self._raw_obs_time = None
         self._battery_v = None
@@ -327,6 +349,7 @@ class ObstacleAvoidanceNode(Node):
             f'front observe <= {_cm(self._clear)} | dodge <= {_cm(self._stop)} | hard backup <= {_cm(self._hard_backup)}',
             f'ToF emergency <= {_cm(self._front_tof_hard)} | side scrape <= {_cm(self._side_guard)} | rear stop <= {_cm(self._rear_stop)}',
             f'recovery: backup {self._backup_sec:.2f}s, rotate commit {self._rotate_commit_sec:.2f}s',
+            f'side escape: release >= {_cm(self._side_escape_release)}, S-turn {self._side_escape_sec:.2f}s',
             'log: state/reason | obstacle + 4-side distances | OAK low-view',
             sep,
         ]
@@ -604,6 +627,7 @@ class ObstacleAvoidanceNode(Node):
             return
 
         # Default: straight drive. Side readings do not steer the robot.
+        self._side_escape_count = 0
         self._set_state(DRIVE)
         twist.linear.x = self._max_speed
         twist.angular.z = 0.0
@@ -619,6 +643,7 @@ class ObstacleAvoidanceNode(Node):
             self._observe_count = 0
             self._front_clear_count = 0
             self._static_confirmed = False
+            self._side_escape_count = 0
             self._set_state(OBSERVE)
 
     def _handle_observe(self, twist: Twist, snap: Snap, front: float) -> bool:
@@ -717,6 +742,7 @@ class ObstacleAvoidanceNode(Node):
         return self._handle_dodge(twist, snap, front, now)
 
     def _start_dodge(self, snap: Snap):
+        self._side_escape_count = 0
         self._turn_dir = self._clearer_side(snap.left, snap.right)
         self._set_state(DODGE, self._dodge_sec)
 
@@ -766,7 +792,10 @@ class ObstacleAvoidanceNode(Node):
         return True
 
 
-    def _start_side_escape(self, snap: Snap):
+    def _start_side_escape(self, snap: Snap, restart: bool = False):
+        if self._state != SIDE_ESCAPE or restart:
+            self._side_escape_count += 1
+
         # If left is too close, rotate right. If right is too close, rotate left.
         left_close = math.isfinite(snap.left) and snap.left < self._side_guard
         right_close = math.isfinite(snap.right) and snap.right < self._side_guard
@@ -800,23 +829,48 @@ class ObstacleAvoidanceNode(Node):
             self._start_edge_escape(snap)
             return self._handle_edge_escape(twist, snap, now)
 
-        left_safe = (not math.isfinite(snap.left)) or snap.left >= self._side_escape
-        right_safe = (not math.isfinite(snap.right)) or snap.right >= self._side_escape
+        left_safe = (
+            not math.isfinite(snap.left)
+            or snap.left >= self._side_escape_release
+        )
+        right_safe = (
+            not math.isfinite(snap.right)
+            or snap.right >= self._side_escape_release
+        )
 
         if left_safe and right_safe:
+            self._side_escape_count = 0
             self._set_state(DRIVE)
             return False
 
+        elapsed = max(0.0, now - self._state_start)
+        away_sec = max(0.15, self._side_escape_sec * 0.45)
+        front_has_room = (not math.isfinite(front)) or front >= self._stop
+        forward = self._side_escape_forward if front_has_room else 0.0
+
         if now < self._state_end:
-            twist.linear.x = 0.0
+            twist.linear.x = forward
+            if elapsed < away_sec:
+                twist.angular.z = self._turn_dir * self._side_escape_ang
+            else:
+                twist.angular.z = (
+                    -self._turn_dir
+                    * self._side_escape_ang
+                    * self._side_escape_counter_scale
+                )
+            return True
+
+        if self._side_escape_count < self._side_escape_max_attempts and front_has_room:
+            self._start_side_escape(snap, restart=True)
+            twist.linear.x = forward
             twist.angular.z = self._turn_dir * self._side_escape_ang
             return True
 
-        # Do not keep spinning forever. Try driving slowly after a small escape turn.
-        self._set_state(DRIVE)
-        return False
+        self._start_backup()
+        return self._handle_backup(twist, snap, now)
 
     def _start_edge_escape(self, snap: Snap):
+        self._side_escape_count = 0
         if self._state != EDGE_ESCAPE:
             self._edge_escape_count += 1
         self._turn_dir = self._clearer_side(snap.left, snap.right)
@@ -851,6 +905,7 @@ class ObstacleAvoidanceNode(Node):
     def _start_backup(self, duration: float | None = None, then_observe: bool = False):
         self._rotation_count = 0
         self._edge_escape_count = 0
+        self._side_escape_count = 0
         self._motion_cmd_since = None
         self._contact_pending = False
         self._backup_then_observe = then_observe
@@ -874,6 +929,7 @@ class ObstacleAvoidanceNode(Node):
         return True
 
     def _start_rotate(self, snap: Snap):
+        self._side_escape_count = 0
         self._turn_dir = self._clearer_side(snap.left, snap.right)
         self._set_state(ROTATE, self._rotate_sec)
 

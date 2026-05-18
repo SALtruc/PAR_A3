@@ -121,7 +121,7 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('pointcloud_target_frame', 'base_link')
         self.declare_parameter('pointcloud_use_tf', True)
         self.declare_parameter('pointcloud_tf_timeout_sec', 0.03)
-        self.declare_parameter('pointcloud_qos', 'sensor_data')
+        self.declare_parameter('pointcloud_qos', 'auto')
         self.declare_parameter('pointcloud_percentile', 10.0)
         self.declare_parameter('pointcloud_center_half_width_m', 0.35)
         self.declare_parameter('pointcloud_side_min_abs_m', 0.15)
@@ -434,6 +434,7 @@ class ObstaclePerceptionNode(Node):
         self._tf_buffer = None
         self._tf_listener = None
         self._last_pointcloud_warn = 0.0
+        self._pointcloud_subscription_labels: list[str] = []
 
         if self._use_pointcloud and self._pointcloud_use_tf:
             if tf2_ros is None:
@@ -471,14 +472,16 @@ class ObstaclePerceptionNode(Node):
                 )
                 self._use_pointcloud = False
             else:
-                self._subscriptions.append(
-                    self.create_subscription(
-                        PointCloud2,
-                        pointcloud_topic,
-                        self._on_pointcloud,
-                        self._pointcloud_qos_profile(),
+                for label, qos_profile in self._pointcloud_qos_profiles():
+                    self._subscriptions.append(
+                        self.create_subscription(
+                            PointCloud2,
+                            pointcloud_topic,
+                            self._on_pointcloud,
+                            qos_profile,
+                        )
                     )
-                )
+                    self._pointcloud_subscription_labels.append(label)
         if self._use_tof:
             for topic in tof_topics:
                 msg_type = Range if tof_msg_type == 'range' else LaserScan
@@ -508,31 +511,46 @@ class ObstaclePerceptionNode(Node):
             f'front_center={math.degrees(self._front_center_angle):.0f}deg, '
             f'depth_image={depth_topic if self._use_depth else "disabled"}, '
             f'pointcloud={pointcloud_topic if self._use_pointcloud else "disabled"}, '
-            f'pointcloud_qos={self._pointcloud_qos}, '
+            f'pointcloud_qos={self._pointcloud_qos_label()}, '
             f'pointcloud_tf={self._pointcloud_target_frame if self._pointcloud_use_tf else "fallback"}, '
             f'tof={",".join(tof_topics) if self._use_tof else "disabled"} '
             f'({tof_msg_type}), '
             f'out={obstacle_topic}'
         )
 
-    def _pointcloud_qos_profile(self) -> QoSProfile:
-        if self._pointcloud_qos in ('reliable_transient_local', 'transient_local'):
+    def _pointcloud_qos_label(self) -> str:
+        if not self._pointcloud_subscription_labels:
+            return self._pointcloud_qos
+        if self._pointcloud_qos == 'auto':
+            return 'auto[' + ','.join(self._pointcloud_subscription_labels) + ']'
+        return self._pointcloud_subscription_labels[0]
+
+    def _pointcloud_qos_profiles(self) -> list[tuple[str, QoSProfile]]:
+        if self._pointcloud_qos in ('auto', ''):
+            return [
+                ('sensor_data', qos_profile_sensor_data),
+                ('reliable', self._pointcloud_qos_profile('reliable')),
+            ]
+        return [(self._pointcloud_qos, self._pointcloud_qos_profile(self._pointcloud_qos))]
+
+    def _pointcloud_qos_profile(self, qos_name: str) -> QoSProfile:
+        if qos_name in ('reliable_transient_local', 'transient_local'):
             return QoSProfile(
                 reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
                 history=HistoryPolicy.KEEP_LAST,
                 depth=10,
             )
-        if self._pointcloud_qos in ('reliable',):
+        if qos_name in ('reliable',):
             return QoSProfile(
                 reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.VOLATILE,
                 history=HistoryPolicy.KEEP_LAST,
                 depth=10,
             )
-        if self._pointcloud_qos not in ('sensor_data', 'best_effort', 'best-effort'):
+        if qos_name not in ('sensor_data', 'best_effort', 'best-effort'):
             self.get_logger().warn(
-                f'Unknown pointcloud_qos={self._pointcloud_qos!r}; using sensor_data.'
+                f'Unknown pointcloud_qos={qos_name!r}; using sensor_data.'
             )
         return qos_profile_sensor_data
 
@@ -958,8 +976,8 @@ class ObstaclePerceptionNode(Node):
                 and self._last_pointcloud_time is None
                 and now - self._start_time >= 5.0):
             self._warn_pointcloud(
-                'No PointCloud2 messages received yet. Check /oak/points hz/type '
-                'or try POINTCLOUD_QOS=reliable.'
+                'No PointCloud2 messages received yet. Check '
+                'ros2 topic type /oak/points and ros2 topic hz /oak/points.'
             )
         depth_recent = depth_image_recent or pointcloud_recent
         front_tof_range = self._tof_min_recent(self._front_tof_topics)

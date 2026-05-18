@@ -49,7 +49,7 @@ obstacle_perception:
     pointcloud_target_frame: base_link
     pointcloud_use_tf: true
     pointcloud_tf_timeout_sec: 0.03
-    pointcloud_qos: sensor_data
+    pointcloud_qos: auto
     pointcloud_percentile: 10.0
     pointcloud_center_half_width_m: 0.35
     pointcloud_side_min_abs_m: 0.15
@@ -130,8 +130,12 @@ obstacle_avoidance:
     rear_stop_distance: 0.20
     side_guard_distance: 0.03
     side_escape_distance: 0.03
+    side_escape_release_distance: 0.08
+    side_escape_forward_speed: 0.035
     side_escape_angular_speed: 0.30
-    side_escape_sec: 0.45
+    side_escape_counter_scale: 0.60
+    side_escape_sec: 0.75
+    side_escape_max_attempts: 4
     edge_escape_enabled: true
     edge_escape_front_distance: 0.15
     edge_escape_clearance: 0.30
