@@ -103,21 +103,21 @@ obstacle_avoidance:
     control_hz: 20.0
 
     # Default movement
-    max_speed: 0.24
+    max_speed: 0.215
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
-    dodge_forward_speed: 0.045
-    dodge_angular_speed: 0.45
+    dodge_forward_speed: 0.035
+    dodge_angular_speed: 0.30
     dodge_step_deg: 60.0
     dodge_pivot_sec: 0.60
 
     # Strong recovery only after too-close/dead-end
-    rotation_angular_speed: 0.50
+    rotation_angular_speed: 0.30
     rotation_step_deg: 70.0
     rotation_commit_sec: 0.65
     max_rotation_attempts: 3
-    backup_speed: 0.08
+    backup_speed: 0.06
     backup_sec: 0.70
 
     # Main thresholds
@@ -131,7 +131,7 @@ obstacle_avoidance:
     side_guard_distance: 0.03
     side_escape_distance: 0.03
     side_escape_release_distance: 0.08
-    side_escape_forward_speed: 0.035
+    side_escape_forward_speed: 0.025
     side_escape_angular_speed: 0.30
     side_escape_counter_scale: 0.60
     side_escape_sec: 0.75
@@ -139,7 +139,7 @@ obstacle_avoidance:
     edge_escape_enabled: true
     edge_escape_front_distance: 0.15
     edge_escape_clearance: 0.30
-    edge_escape_angular_speed: 0.45
+    edge_escape_angular_speed: 0.30
     edge_escape_sec: 0.80
     edge_escape_max_attempts: 3
     corner_backup_side_distance: 0.00
@@ -154,7 +154,7 @@ obstacle_avoidance:
     avoid_turn_direction: -1.0 # fallback when side clearances are nearly tied; -1 = right
 
     # Static approach + dynamic timeout
-    creep_speed: 0.040         # m/s approach speed after static confirmed (to reach stop_distance then dodge)
+    creep_speed: 0.030         # m/s approach speed after static confirmed (to reach stop_distance then dodge)
     dynamic_timeout_sec: 5.0   # seconds to wait for dynamic object to clear before treating as static
     dynamic_close_distance: 0.20  # sudden dynamic appearance threshold (within 20 cm)
     surprise_backup_enabled: false

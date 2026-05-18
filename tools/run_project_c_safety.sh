@@ -85,9 +85,9 @@ fi
 
 exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
-  depth_topic:="${DEPTH_TOPIC:-/camera/depth/image_rect_raw}" \
+  depth_topic:="${DEPTH_TOPIC:-/oak/stereo/image_raw}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC:-/oak/points}" \
-  pointcloud_qos:="${POINTCLOUD_QOS:-auto}" \
+  pointcloud_qos:="${POINTCLOUD_QOS:-best_effort}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
   tof_msg_type:="${TOF_MSG_TYPE:-scan}" \
   front_tof_topics:="${FRONT_TOF_TOPICS:-/range/fl,/range/fr}" \
@@ -95,16 +95,16 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   cmd_vel_topic:="${CMD_VEL_TOPIC:-/cmd_vel}" \
   odom_topic:="${ODOM_TOPIC:-/rosbot_base_controller/odom}" \
   imu_topic:="${IMU_TOPIC:-/imu_broadcaster/imu}" \
-  use_depth:="${USE_DEPTH:-false}" \
+  use_depth:="${USE_DEPTH:-true}" \
   use_pointcloud:="${USE_POINTCLOUD:-true}" \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
   local_only:="${PROJECT_C_LOCAL_ONLY}" \
-  max_speed:="${MAX_SPEED:-0.24}" \
-  backup_speed:="${BACKUP_SPEED:-0.08}" \
+  max_speed:="${MAX_SPEED:-0.215}" \
+  backup_speed:="${BACKUP_SPEED:-0.06}" \
   backup_sec:="${BACKUP_SEC:-0.70}" \
   side_escape_release_distance:="${SIDE_ESCAPE_RELEASE_DISTANCE:-0.08}" \
-  side_escape_forward_speed:="${SIDE_ESCAPE_FORWARD_SPEED:-0.035}" \
+  side_escape_forward_speed:="${SIDE_ESCAPE_FORWARD_SPEED:-0.025}" \
   side_escape_counter_scale:="${SIDE_ESCAPE_COUNTER_SCALE:-0.60}" \
   side_escape_sec:="${SIDE_ESCAPE_SEC:-0.75}" \
   side_escape_max_attempts:="${SIDE_ESCAPE_MAX_ATTEMPTS:-4}" \

@@ -104,12 +104,12 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.24)
+        self.declare_parameter('max_speed', 0.215)
         self.declare_parameter('observe_speed', 0.0)
-        self.declare_parameter('dodge_forward_speed', 0.045)
-        self.declare_parameter('dodge_angular_speed', 0.45)
-        self.declare_parameter('rotation_angular_speed', 0.50)
-        self.declare_parameter('backup_speed', 0.08)
+        self.declare_parameter('dodge_forward_speed', 0.035)
+        self.declare_parameter('dodge_angular_speed', 0.30)
+        self.declare_parameter('rotation_angular_speed', 0.30)
+        self.declare_parameter('backup_speed', 0.06)
 
         # Distances, metres
         self.declare_parameter('clear_distance', 0.35)
@@ -122,7 +122,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('side_guard_distance', 0.03)
         self.declare_parameter('side_escape_distance', 0.03)
         self.declare_parameter('side_escape_release_distance', 0.08)
-        self.declare_parameter('side_escape_forward_speed', 0.035)
+        self.declare_parameter('side_escape_forward_speed', 0.025)
         self.declare_parameter('side_escape_angular_speed', 0.30)
         self.declare_parameter('side_escape_counter_scale', 0.60)
         self.declare_parameter('side_escape_sec', 0.75)
@@ -130,7 +130,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('edge_escape_enabled', True)
         self.declare_parameter('edge_escape_front_distance', 0.15)
         self.declare_parameter('edge_escape_clearance', 0.30)
-        self.declare_parameter('edge_escape_angular_speed', 0.45)
+        self.declare_parameter('edge_escape_angular_speed', 0.30)
         self.declare_parameter('edge_escape_sec', 0.80)
         self.declare_parameter('edge_escape_max_attempts', 3)
         self.declare_parameter('corner_backup_side_distance', 0.00)
@@ -153,7 +153,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('avoid_turn_direction', -1.0)
 
         # Static approach + dynamic timeout
-        self.declare_parameter('creep_speed', 0.040)
+        self.declare_parameter('creep_speed', 0.030)
         self.declare_parameter('dynamic_timeout_sec', 5.0)
         self.declare_parameter('dynamic_close_distance', 0.20)
         self.declare_parameter('surprise_backup_enabled', False)
