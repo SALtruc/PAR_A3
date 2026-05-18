@@ -9,7 +9,8 @@ set -euo pipefail
 DISTRO="${ROS_DISTRO:-jazzy}"
 RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 CAMERA_MODEL="${CAMERA_MODEL:-OAK-D-PRO}"
-DEPTHAI_LAUNCH="${DEPTHAI_LAUNCH:-driver.launch.py}"
+DEPTHAI_PACKAGE="${DEPTHAI_PACKAGE:-auto}"
+DEPTHAI_LAUNCH="${DEPTHAI_LAUNCH:-auto}"
 POINTCLOUD_TOPIC="${POINTCLOUD_TOPIC:-auto}"
 WAIT_SEC="${WAIT_SEC:-20}"
 PROJECT_C_STOP_DEPTHAI_SNAP="${PROJECT_C_STOP_DEPTHAI_SNAP:-false}"
@@ -44,10 +45,59 @@ if [ -n "${CYCLONEDDS_URI:-}" ]; then
   unset CYCLONEDDS_URI
 fi
 
-if ! ros2 pkg prefix depthai_ros_driver >/dev/null 2>&1; then
-  echo "[error] depthai_ros_driver is not visible in this ROS environment."
-  echo "        Install/source the DepthAI ROS 2 driver before running this helper."
+if [ "$DEPTHAI_PACKAGE" = "auto" ]; then
+  for candidate in depthai_ros_driver_v3 depthai_ros_driver; do
+    if ros2 pkg prefix "$candidate" >/dev/null 2>&1; then
+      DEPTHAI_PACKAGE="$candidate"
+      break
+    fi
+  done
+elif ! ros2 pkg prefix "$DEPTHAI_PACKAGE" >/dev/null 2>&1; then
+  echo "[warn] $DEPTHAI_PACKAGE is not visible in this ROS environment."
+  for candidate in depthai_ros_driver_v3 depthai_ros_driver; do
+    if ros2 pkg prefix "$candidate" >/dev/null 2>&1; then
+      echo "[warn] Falling back to available package: $candidate"
+      DEPTHAI_PACKAGE="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ "$DEPTHAI_PACKAGE" = "auto" ]; then
+  echo "[error] No DepthAI ROS driver package is visible."
+  echo "        Install/source depthai_ros_driver_v3 or depthai_ros_driver first."
   exit 2
+fi
+
+DEPTHAI_SHARE="$(ros2 pkg prefix "$DEPTHAI_PACKAGE")/share/$DEPTHAI_PACKAGE"
+
+launch_exists() {
+  [ -f "${DEPTHAI_SHARE}/launch/$1" ]
+}
+
+if [ "$DEPTHAI_LAUNCH" = "auto" ]; then
+  for candidate in camera.launch.py driver.launch.py pointcloud.launch.py rgbd_pcl.launch.py; do
+    if launch_exists "$candidate"; then
+      DEPTHAI_LAUNCH="$candidate"
+      break
+    fi
+  done
+elif ! launch_exists "$DEPTHAI_LAUNCH"; then
+  echo "[warn] $DEPTHAI_LAUNCH was not found in ${DEPTHAI_SHARE}/launch"
+  for candidate in camera.launch.py driver.launch.py pointcloud.launch.py rgbd_pcl.launch.py; do
+    if launch_exists "$candidate"; then
+      echo "[warn] Falling back to available launch file: $candidate"
+      DEPTHAI_LAUNCH="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ "$DEPTHAI_LAUNCH" = "auto" ]; then
+  echo "[error] No supported DepthAI launch file found in ${DEPTHAI_SHARE}/launch"
+  echo "[info] Available launch files:"
+  find "${DEPTHAI_SHARE}/launch" -maxdepth 1 -type f -name '*.launch.py' -printf '       %f\n' 2>/dev/null || true
+  exit 3
 fi
 
 case "${PROJECT_C_STOP_DEPTHAI_SNAP,,}" in
@@ -64,15 +114,16 @@ ros2 daemon stop >/dev/null 2>&1 || true
 echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
 echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
 echo "[ok] ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-<unset>}"
-echo "[oak] launching depthai_ros_driver $DEPTHAI_LAUNCH camera_model:=$CAMERA_MODEL"
-if [ "$DEPTHAI_LAUNCH" = "driver.launch.py" ]; then
-  ros2 launch depthai_ros_driver "$DEPTHAI_LAUNCH" \
+echo "[ok] DEPTHAI_PACKAGE=$DEPTHAI_PACKAGE"
+echo "[oak] launching $DEPTHAI_PACKAGE $DEPTHAI_LAUNCH camera_model:=$CAMERA_MODEL"
+if [ "$DEPTHAI_LAUNCH" = "driver.launch.py" ] || [ "$DEPTHAI_LAUNCH" = "camera.launch.py" ]; then
+  ros2 launch "$DEPTHAI_PACKAGE" "$DEPTHAI_LAUNCH" \
     camera_model:="${CAMERA_MODEL}" \
     rs_compat:="${DEPTHAI_RS_COMPAT}" \
     pointcloud.enable:="${DEPTHAI_ENABLE_POINTCLOUD}" \
     "$@" &
 else
-  ros2 launch depthai_ros_driver "$DEPTHAI_LAUNCH" \
+  ros2 launch "$DEPTHAI_PACKAGE" "$DEPTHAI_LAUNCH" \
     camera_model:="${CAMERA_MODEL}" \
     "$@" &
 fi
@@ -185,6 +236,7 @@ elif [ "$seen_topic" = true ]; then
   echo "[hint] If another service owns the camera, retry with:"
   echo "       PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
   echo "[hint] To compare the example launch files, retry with one of:"
+  echo "       DEPTHAI_LAUNCH=camera.launch.py PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
   echo "       DEPTHAI_LAUNCH=pointcloud.launch.py PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
   echo "       DEPTHAI_LAUNCH=rgbd_pcl.launch.py PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
   echo "[hint] If topics exist but no data flows, run:"
