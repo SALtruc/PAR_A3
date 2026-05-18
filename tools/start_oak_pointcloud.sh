@@ -75,9 +75,45 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
+pointcloud_topic_visible() {
+  local topics_with_types="$1"
+  printf '%s\n' "$topics_with_types" \
+    | awk -v topic="$POINTCLOUD_TOPIC" '
+        $1 == topic && index($0, "[sensor_msgs/msg/PointCloud2]") { found = 1 }
+        END { exit found ? 0 : 1 }
+      '
+}
+
+pointcloud_message_ready() {
+  timeout 5 ros2 topic echo --once --qos-profile sensor_data \
+    "$POINTCLOUD_TOPIC" >/dev/null 2>&1 \
+    || timeout 5 ros2 topic echo --once --qos-reliability best_effort \
+    "$POINTCLOUD_TOPIC" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1 \
+    || timeout 5 ros2 topic echo --once --qos-reliability reliable \
+    "$POINTCLOUD_TOPIC" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1
+}
+
+print_oak_diagnostics() {
+  local topics_with_types="${1:-}"
+
+  echo "[diag] /oak and camera topics visible:"
+  printf '%s\n' "$topics_with_types" \
+    | grep -E '^/oak|^/camera|depth|rgb|color|stereo' \
+    | sed 's/^/       /' || true
+
+  echo "[diag] PointCloud2 topics visible:"
+  printf '%s\n' "$topics_with_types" \
+    | awk 'index($0, "[sensor_msgs/msg/PointCloud2]") { print "       " $0 }'
+
+  echo "[diag] $POINTCLOUD_TOPIC endpoint info:"
+  timeout 8 ros2 topic info "$POINTCLOUD_TOPIC" --verbose 2>/dev/null \
+    | sed 's/^/       /' || true
+}
+
 deadline=$((SECONDS + WAIT_SEC))
 seen_topic=false
 seen_message=false
+last_status=0
 while [ "$SECONDS" -lt "$deadline" ]; do
   if ! kill -0 "$driver_pid" >/dev/null 2>&1; then
     wait "$driver_pid" || true
@@ -86,21 +122,22 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   fi
 
   topics_with_types="$(ros2 topic list -t 2>/dev/null || true)"
-  if printf '%s\n' "$topics_with_types" \
-      | awk -v topic="$POINTCLOUD_TOPIC" '
-          $1 == topic && index($0, "[sensor_msgs/msg/PointCloud2]") { found = 1 }
-          END { exit found ? 0 : 1 }
-        '; then
+  if pointcloud_topic_visible "$topics_with_types"; then
+    if [ "$seen_topic" = false ]; then
+      echo "[ok] PointCloud2 topic visible: $POINTCLOUD_TOPIC"
+      echo "[wait] Waiting for the first PointCloud2 message..."
+    fi
     seen_topic=true
-    if timeout 5 ros2 topic echo --once --qos-reliability best_effort \
-        "$POINTCLOUD_TOPIC" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1 \
-        || timeout 5 ros2 topic echo --once --qos-reliability reliable \
-        "$POINTCLOUD_TOPIC" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1; then
+    if pointcloud_message_ready; then
       seen_message=true
       break
     fi
   fi
 
+  if [ $((SECONDS - last_status)) -ge 5 ]; then
+    last_status=$SECONDS
+    echo "[wait] Still waiting for $POINTCLOUD_TOPIC data... $((deadline - SECONDS))s left"
+  fi
   sleep 1
 done
 
@@ -109,13 +146,14 @@ if [ "$seen_message" = true ]; then
   echo "[next] In another terminal: POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC USE_POINTCLOUD=true bash tools/run_project_c_safety.sh"
 elif [ "$seen_topic" = true ]; then
   echo "[warn] $POINTCLOUD_TOPIC is visible but no PointCloud2 messages arrived within ${WAIT_SEC}s."
+  print_oak_diagnostics "${topics_with_types:-}"
   echo "[hint] If another service owns the camera, retry with:"
   echo "       PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
+  echo "[hint] If topics exist but no data flows, run:"
+  echo "       ros2 topic hz $POINTCLOUD_TOPIC --qos-profile sensor_data"
 else
   echo "[warn] $POINTCLOUD_TOPIC did not appear within ${WAIT_SEC}s."
-  echo "[info] Visible PointCloud2 topics:"
-  printf '%s\n' "${topics_with_types:-}" \
-    | awk 'index($0, "[sensor_msgs/msg/PointCloud2]") { print "       " $0 }'
+  print_oak_diagnostics "${topics_with_types:-}"
   echo "[hint] If another service owns the camera, retry with:"
   echo "       PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
 fi
