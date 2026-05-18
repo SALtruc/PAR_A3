@@ -127,7 +127,7 @@ obstacle_avoidance:
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
     stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
-    low_obstacle_distance: 0.25        # only react to low obstacles from 25 cm
+    low_obstacle_distance: 0.35        # react same range as LIDAR clear_distance
     low_obstacle_backup_distance: 0.12  # emergency backup for low obstacles at 12 cm
     low_obstacle_min_points: 20
     front_tof_obstacle_distance: 0.30

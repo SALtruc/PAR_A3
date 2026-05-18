@@ -329,7 +329,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   max_speed:="${MAX_SPEED:-0.215}" \
   backup_speed:="${BACKUP_SPEED:-0.06}" \
   backup_sec:="${BACKUP_SEC:-0.70}" \
-  low_obstacle_distance:="${LOW_OBSTACLE_DISTANCE:-0.25}" \
+  low_obstacle_distance:="${LOW_OBSTACLE_DISTANCE:-0.35}" \
   low_obstacle_backup_distance:="${LOW_OBSTACLE_BACKUP_DISTANCE:-0.12}" \
   pre_dodge_backup_enabled:="${PRE_DODGE_BACKUP_ENABLED:-true}" \
   pre_dodge_backup_sec:="${PRE_DODGE_BACKUP_SEC:-0.40}" \
