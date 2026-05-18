@@ -64,6 +64,14 @@ def cm(value):
     return f'{value * 100:.0f}cm' if math.isfinite(value) else 'inf'
 
 
+def finite(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return math.inf
+    return value if math.isfinite(value) else math.inf
+
+
 class OakLowWatch(Node):
     def __init__(self):
         super().__init__('oak_low_watch')
@@ -86,24 +94,36 @@ class OakLowWatch(Node):
         lidar = rep.get('lidar', {})
         fused = rep.get('fused', {})
         tof = rep.get('tof', {})
+        image_low = finite(depth.get('image_low_front_min'))
+        image_front = finite(depth.get('image_front_min'))
+        image_ok = bool(depth.get('image_available', False))
         oak_low = depth.get('pointcloud_low_front_min')
+        oak_low_f = finite(oak_low)
         pts = int(depth.get('pointcloud_low_front_count') or 0)
         pc = int(depth.get('pointcloud_sample_count') or 0)
         fallback = int(depth.get('pointcloud_low_fallback_count') or 0)
-        status = 'LOW_OBSTACLE' if pts > 0 and math.isfinite(float(oak_low or math.inf)) else 'clear'
+        pc_status = 'LOW_OBSTACLE' if pts > 0 and math.isfinite(oak_low_f) else 'clear'
+        if not image_ok:
+            image_status = 'no_depth'
+        elif math.isfinite(image_low) and image_low <= 0.35:
+            image_status = 'LOW_OBSTACLE'
+        elif math.isfinite(image_low):
+            image_status = 'clear'
+        else:
+            image_status = 'no_low_data'
+        lidar_front = finite(lidar.get('front_control'))
         lidar_miss = (
-            status == 'LOW_OBSTACLE'
-            and not math.isfinite(float(lidar.get('front_control') or math.inf))
-            or (
-                status == 'LOW_OBSTACLE'
-                and float(lidar.get('front_control') or math.inf) > 0.35
-            )
+            (pc_status == 'LOW_OBSTACLE' or image_status == 'LOW_OBSTACLE')
+            and (not math.isfinite(lidar_front) or lidar_front > 0.35)
         )
         print(
             '[oak_low] '
-            f'status={status} dist={cm(oak_low)} pts={pts} '
+            f'depth_img={"ok" if image_ok else "no"} '
+            f'img_front={cm(image_front)} '
+            f'img_low={image_status} img_low_dist={cm(image_low)} '
+            f'pc_low={pc_status} pc_low_dist={cm(oak_low_f)} pts={pts} '
             f'pc={pc} fallback={fallback} '
-            f'lidar_front={cm(lidar.get("front_control"))} '
+            f'lidar_front={cm(lidar_front)} '
             f'fused_front={cm(fused.get("front_distance"))} '
             f'tof={cm(tof.get("range"))} '
             f'lidar_miss={"yes" if lidar_miss else "no"}',

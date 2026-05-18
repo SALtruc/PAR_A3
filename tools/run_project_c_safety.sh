@@ -135,12 +135,12 @@ first_depth_topic() {
 
 depth_has_sample() {
   local topic="$1"
-  timeout 3 ros2 topic echo --once --qos-profile sensor_data \
-    "$topic" >/dev/null 2>&1 \
-    || timeout 3 ros2 topic echo --once --qos-reliability best_effort \
-    "$topic" sensor_msgs/msg/Image >/dev/null 2>&1 \
-    || timeout 3 ros2 topic echo --once --qos-reliability reliable \
-    "$topic" sensor_msgs/msg/Image >/dev/null 2>&1
+  timeout 5 ros2 topic hz "$topic" --qos-profile sensor_data 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 5 ros2 topic hz "$topic" --qos-reliability best_effort 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 5 ros2 topic hz "$topic" --qos-reliability reliable 2>/dev/null \
+    | grep -q 'average rate:'
 }
 
 first_pointcloud_topic() {
@@ -153,12 +153,14 @@ first_pointcloud_topic() {
 
 pointcloud_has_sample() {
   local topic="$1"
-  timeout 3 ros2 topic echo --once --qos-profile sensor_data \
-    "$topic" >/dev/null 2>&1 \
-    || timeout 3 ros2 topic echo --once --qos-reliability best_effort \
-    "$topic" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1 \
-    || timeout 3 ros2 topic echo --once --qos-reliability reliable \
-    "$topic" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1
+  timeout 5 ros2 topic hz "$topic" --qos-reliability reliable --qos-durability transient_local 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 5 ros2 topic hz "$topic" --qos-reliability reliable 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 5 ros2 topic hz "$topic" --qos-profile sensor_data 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 5 ros2 topic hz "$topic" --qos-reliability best_effort 2>/dev/null \
+    | grep -q 'average rate:'
 }
 
 topics_with_types=''

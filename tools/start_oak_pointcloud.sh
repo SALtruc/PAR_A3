@@ -17,6 +17,8 @@ PROJECT_C_STOP_DEPTHAI_SNAP="${PROJECT_C_STOP_DEPTHAI_SNAP:-false}"
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
 DEPTHAI_RS_COMPAT="${DEPTHAI_RS_COMPAT:-true}"
 DEPTHAI_ENABLE_POINTCLOUD="${DEPTHAI_ENABLE_POINTCLOUD:-true}"
+DEPTHAI_PIPELINE_TYPE="${DEPTHAI_PIPELINE_TYPE:-RGBD}"
+DEPTHAI_STEREO_PUBLISH="${DEPTHAI_STEREO_PUBLISH:-true}"
 
 if [ ! -f "/opt/ros/${DISTRO}/setup.bash" ]; then
   echo "[error] /opt/ros/${DISTRO}/setup.bash not found."
@@ -116,7 +118,16 @@ echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
 echo "[ok] ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-<unset>}"
 echo "[ok] DEPTHAI_PACKAGE=$DEPTHAI_PACKAGE"
 echo "[oak] launching $DEPTHAI_PACKAGE $DEPTHAI_LAUNCH camera_model:=$CAMERA_MODEL"
-if [ "$DEPTHAI_LAUNCH" = "driver.launch.py" ] || [ "$DEPTHAI_LAUNCH" = "camera.launch.py" ]; then
+if { [ "$DEPTHAI_LAUNCH" = "driver.launch.py" ] || [ "$DEPTHAI_LAUNCH" = "camera.launch.py" ]; } \
+    && [ "$DEPTHAI_PACKAGE" = "depthai_ros_driver_v3" ]; then
+  ros2 launch "$DEPTHAI_PACKAGE" "$DEPTHAI_LAUNCH" \
+    camera_model:="${CAMERA_MODEL}" \
+    rs_compat:="${DEPTHAI_RS_COMPAT}" \
+    pointcloud.enable:="${DEPTHAI_ENABLE_POINTCLOUD}" \
+    pipeline_gen.i_pipeline_type:="${DEPTHAI_PIPELINE_TYPE}" \
+    stereo.i_publish_topic:="${DEPTHAI_STEREO_PUBLISH}" \
+    "$@" &
+elif [ "$DEPTHAI_LAUNCH" = "driver.launch.py" ] || [ "$DEPTHAI_LAUNCH" = "camera.launch.py" ]; then
   ros2 launch "$DEPTHAI_PACKAGE" "$DEPTHAI_LAUNCH" \
     camera_model:="${CAMERA_MODEL}" \
     rs_compat:="${DEPTHAI_RS_COMPAT}" \
@@ -160,12 +171,14 @@ pointcloud_topics() {
 
 pointcloud_message_ready() {
   local topic="$1"
-  timeout 5 ros2 topic echo --once --qos-profile sensor_data \
-    "$topic" >/dev/null 2>&1 \
-    || timeout 5 ros2 topic echo --once --qos-reliability best_effort \
-    "$topic" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1 \
-    || timeout 5 ros2 topic echo --once --qos-reliability reliable \
-    "$topic" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1
+  timeout 6 ros2 topic hz "$topic" --qos-reliability reliable --qos-durability transient_local 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 6 ros2 topic hz "$topic" --qos-reliability reliable 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 6 ros2 topic hz "$topic" --qos-profile sensor_data 2>/dev/null \
+    | grep -q 'average rate:' \
+    || timeout 6 ros2 topic hz "$topic" --qos-reliability best_effort 2>/dev/null \
+    | grep -q 'average rate:'
 }
 
 print_oak_diagnostics() {

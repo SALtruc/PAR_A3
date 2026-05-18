@@ -114,6 +114,18 @@ uses `USE_DEPTH=auto` by default and will enable an active depth `Image` topic
 when one is publishing, even if `/oak/points` is not usable. Force a known depth
 topic with `DEPTH_TOPIC=/actual/depth USE_DEPTH=true`.
 
+For a clean OAK-only diagnosis, run:
+
+```bash
+bash tools/oak_depth_doctor.sh
+```
+
+The doctor checks the Husarion depthai snap config, looks for Luxonis USB udev
+rules, lists OAK depth/pointcloud topics, and verifies real message flow with
+`ros2 topic hz` instead of `ros2 topic echo` so large Image/PointCloud messages
+do not trip the ROS CLI. It prints the exact `DEPTH_TOPIC=...` or
+`POINTCLOUD_TOPIC=...` command to use for Project C.
+
 If the built-in depthai snap is not publishing `/oak/points`, start the
 official driver in a separate terminal:
 
@@ -124,8 +136,10 @@ bash tools/start_oak_pointcloud.sh
 The helper auto-detects the available DepthAI launch file. On older driver
 packages this is usually `camera.launch.py`; on newer packages it can be
 `driver.launch.py`. For those launch files it passes `rs_compat:=true` and
-`pointcloud.enable:=true`, then waits for a real `PointCloud2` sample before
-printing the Project C command. To compare DepthAI example launches, set
+`pointcloud.enable:=true`. For `depthai_ros_driver_v3`, it also requests an
+`RGBD` pipeline and publishes the stereo stream, then waits for a real
+`PointCloud2` rate before printing the Project C command. To compare DepthAI
+example launches, set
 `DEPTHAI_LAUNCH=pointcloud.launch.py` or `DEPTHAI_LAUNCH=rgbd_pcl.launch.py`.
 It also prefers `depthai_ros_driver_v3` when installed, falling back to the
 older `depthai_ros_driver` package.
