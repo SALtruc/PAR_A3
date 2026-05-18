@@ -124,6 +124,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('low_obstacle_min_points', 20)
         self.declare_parameter('front_tof_obstacle_distance', 0.30)
         self.declare_parameter('front_tof_hard_distance', 0.12)
+        self.declare_parameter('pre_dodge_backup_enabled', False)
+        self.declare_parameter('pre_dodge_backup_sec', 0.40)
         self.declare_parameter('dodge_clearance', 0.03)
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.03)
@@ -215,7 +217,7 @@ class ObstacleAvoidanceNode(Node):
             min(float(p('hard_backup_distance').value), self._stop * 0.95),
         )
         self._low_obstacle_distance = max(
-            self._clear,
+            0.0,
             float(p('low_obstacle_distance').value),
         )
         self._low_obstacle_backup = max(
@@ -301,6 +303,8 @@ class ObstacleAvoidanceNode(Node):
         self._tilt_stop_rad = math.radians(max(0.0, float(p('tilt_stop_deg').value)))
         self._tilt_stop_pause = max(0.0, float(p('tilt_stop_pause_sec').value))
         self._tilt_imu_stale = max(0.05, float(p('tilt_imu_stale_sec').value))
+        self._pre_dodge_backup = _as_bool(p('pre_dodge_backup_enabled').value)
+        self._pre_dodge_backup_sec = max(0.0, float(p('pre_dodge_backup_sec').value))
         self._debug = _as_bool(p('debug_decisions').value)
         self._debug_period = float(p('debug_period_sec').value)
         self._creep_speed = float(p('creep_speed').value)
@@ -333,6 +337,7 @@ class ObstacleAvoidanceNode(Node):
         self._dynamic_first_seen: float | None = None  # monotonic time when dynamic first detected
         self._static_confirmed = False                 # True after observe_frames with obstacle
         self._backup_then_observe = False
+        self._backup_then_dodge = False
         self._last_surprise_backup = -math.inf
         self._odom_linear = 0.0
         self._odom_angular = 0.0
@@ -763,6 +768,9 @@ class ObstacleAvoidanceNode(Node):
         # because the robot can physically ride over them before LIDAR agrees.
         if self._low_obstacle_hit(snap):
             self._static_confirmed = False
+            if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
+                self._start_backup(self._pre_dodge_backup_sec, then_dodge=True)
+                return self._handle_backup(twist, snap, now)
             self._start_dodge(snap)
             return self._handle_dodge(twist, snap, front, now)
 
@@ -773,8 +781,12 @@ class ObstacleAvoidanceNode(Node):
             twist.angular.z = 0.0
             return True
 
-        # At stop_distance: initiate dodge toward the clearer side.
+        # At stop_distance: back up briefly so the dodge arc has side clearance,
+        # then pivot. Needed because OAK can't see close side objects while turning.
         self._static_confirmed = False
+        if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
+            self._start_backup(self._pre_dodge_backup_sec, then_dodge=True)
+            return self._handle_backup(twist, snap, now)
         self._start_dodge(snap)
         return self._handle_dodge(twist, snap, front, now)
 
@@ -939,13 +951,15 @@ class ObstacleAvoidanceNode(Node):
         twist.angular.z = 0.0
         return True
 
-    def _start_backup(self, duration: float | None = None, then_observe: bool = False):
+    def _start_backup(self, duration: float | None = None, then_observe: bool = False,
+                       then_dodge: bool = False):
         self._rotation_count = 0
         self._edge_escape_count = 0
         self._side_escape_count = 0
         self._motion_cmd_since = None
         self._contact_pending = False
         self._backup_then_observe = then_observe
+        self._backup_then_dodge = then_dodge
         self._set_state(BACKUP, self._backup_sec if duration is None else duration)
 
     def _handle_backup(self, twist: Twist, snap: Snap, now: float) -> bool:
@@ -961,6 +975,11 @@ class ObstacleAvoidanceNode(Node):
             twist.linear.x = 0.0
             twist.angular.z = 0.0
             return True
+
+        if self._backup_then_dodge:
+            self._backup_then_dodge = False
+            self._start_dodge(snap)
+            return self._handle_dodge(twist, snap, self._effective_front(snap), now)
 
         self._start_rotate(snap)
         return True
@@ -1060,9 +1079,9 @@ class ObstacleAvoidanceNode(Node):
         if math.isfinite(snap.front_fused):
             return snap.front_fused
         candidates = [snap.front_lidar, snap.front_depth]
-        if self._valid_oak_low(snap):
+        if self._valid_oak_low(snap) and snap.front_oak_low <= self._low_obstacle_distance:
             candidates.append(snap.front_oak_low)
-        if self._valid_depth_low(snap):
+        if self._valid_depth_low(snap) and snap.front_depth_low <= self._low_obstacle_distance:
             candidates.append(snap.front_depth_low)
         if math.isfinite(snap.front_tof) and snap.front_tof <= self._front_tof_obstacle:
             candidates.append(snap.front_tof)

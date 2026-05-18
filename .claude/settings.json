@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=no husarion@192.168.1.223 \"echo 'connected' && ls ~/\")",
+      "Bash(where plink *)",
+      "Bash(python -c \"import paramiko; print\\('paramiko ok'\\)\")",
+      "Bash(python3 -c \"import paramiko; print\\('paramiko ok'\\)\")",
+      "Bash(pip3 install *)",
+      "PowerShell($python = \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\"; & $python -c \"import paramiko; print\\('paramiko ok'\\)\" 2>&1)"
     ]
   }
 }
