@@ -11,10 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISTRO="${ROS_DISTRO:-jazzy}"
 EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
-# husarion-depthai snap bundles rmw_fastrtps_cpp only (librmw_cyclonedds_cpp.so
-# is absent). Use FastRTPS so our nodes share the same RMW as the snap.
-# Override via: PROJECT_C_RMW_IMPLEMENTATION=rmw_cyclonedds_cpp bash $0
-RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+# rmw_fastrtps_cpp segfaults on this ROSbot image; keep CycloneDDS.
+# CycloneDDS interoperates with the depthai snap's FastRTPS when QoS matches.
+RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 # Keep this off by default because ROSbot firmware/sensor participants may be
 # exposed through robot-local network namespaces instead of localhost.
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
@@ -95,7 +94,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
   depth_topic:="${DEPTH_TOPIC:-/oak/stereo/image_raw}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC:-/oak/points}" \
-  pointcloud_qos:="${POINTCLOUD_QOS:-best_effort}" \
+  pointcloud_qos:="${POINTCLOUD_QOS:-reliable}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
   tof_msg_type:="${TOF_MSG_TYPE:-scan}" \
   front_tof_topics:="${FRONT_TOF_TOPICS:-/range/fl,/range/fr}" \
@@ -103,7 +102,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   cmd_vel_topic:="${CMD_VEL_TOPIC:-/cmd_vel}" \
   odom_topic:="${ODOM_TOPIC:-/rosbot_base_controller/odom}" \
   imu_topic:="${IMU_TOPIC:-/imu_broadcaster/imu}" \
-  use_depth:="${USE_DEPTH:-true}" \
+  use_depth:="${USE_DEPTH:-false}" \
   use_pointcloud:="${USE_POINTCLOUD:-true}" \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \

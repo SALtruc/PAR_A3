@@ -14,7 +14,7 @@ obstacle_perception:
     obstacle_topic: /obstacle_representation
 
     use_lidar: true
-    use_depth: true
+    use_depth: false
     use_pointcloud: true
     use_tof: true
     publish_hz: 20.0
@@ -49,7 +49,7 @@ obstacle_perception:
     pointcloud_target_frame: base_link
     pointcloud_use_tf: true
     pointcloud_tf_timeout_sec: 0.03
-    pointcloud_qos: auto
+    pointcloud_qos: reliable
     pointcloud_percentile: 10.0
     pointcloud_center_half_width_m: 0.35
     pointcloud_side_min_abs_m: 0.15
