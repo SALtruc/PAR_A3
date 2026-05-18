@@ -9,11 +9,13 @@ set -euo pipefail
 DISTRO="${ROS_DISTRO:-jazzy}"
 RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 CAMERA_MODEL="${CAMERA_MODEL:-OAK-D-PRO}"
-DEPTHAI_LAUNCH="${DEPTHAI_LAUNCH:-pointcloud.launch.py}"
+DEPTHAI_LAUNCH="${DEPTHAI_LAUNCH:-driver.launch.py}"
 POINTCLOUD_TOPIC="${POINTCLOUD_TOPIC:-auto}"
 WAIT_SEC="${WAIT_SEC:-20}"
 PROJECT_C_STOP_DEPTHAI_SNAP="${PROJECT_C_STOP_DEPTHAI_SNAP:-false}"
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
+DEPTHAI_RS_COMPAT="${DEPTHAI_RS_COMPAT:-true}"
+DEPTHAI_ENABLE_POINTCLOUD="${DEPTHAI_ENABLE_POINTCLOUD:-true}"
 
 if [ ! -f "/opt/ros/${DISTRO}/setup.bash" ]; then
   echo "[error] /opt/ros/${DISTRO}/setup.bash not found."
@@ -63,9 +65,17 @@ echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
 echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
 echo "[ok] ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-<unset>}"
 echo "[oak] launching depthai_ros_driver $DEPTHAI_LAUNCH camera_model:=$CAMERA_MODEL"
-ros2 launch depthai_ros_driver "$DEPTHAI_LAUNCH" \
-  camera_model:="${CAMERA_MODEL}" \
-  "$@" &
+if [ "$DEPTHAI_LAUNCH" = "driver.launch.py" ]; then
+  ros2 launch depthai_ros_driver "$DEPTHAI_LAUNCH" \
+    camera_model:="${CAMERA_MODEL}" \
+    rs_compat:="${DEPTHAI_RS_COMPAT}" \
+    pointcloud.enable:="${DEPTHAI_ENABLE_POINTCLOUD}" \
+    "$@" &
+else
+  ros2 launch depthai_ros_driver "$DEPTHAI_LAUNCH" \
+    camera_model:="${CAMERA_MODEL}" \
+    "$@" &
+fi
 driver_pid=$!
 
 cleanup() {
@@ -174,7 +184,8 @@ elif [ "$seen_topic" = true ]; then
   print_oak_diagnostics "${topics_with_types:-}"
   echo "[hint] If another service owns the camera, retry with:"
   echo "       PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
-  echo "[hint] If you need the RGBD pointcloud launch specifically, retry with:"
+  echo "[hint] To compare the example launch files, retry with one of:"
+  echo "       DEPTHAI_LAUNCH=pointcloud.launch.py PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
   echo "       DEPTHAI_LAUNCH=rgbd_pcl.launch.py PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
   echo "[hint] If topics exist but no data flows, run:"
   echo "       ros2 topic list -t | grep PointCloud2"

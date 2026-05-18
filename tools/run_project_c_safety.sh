@@ -122,6 +122,16 @@ first_pointcloud_topic() {
     | head -n 1
 }
 
+pointcloud_has_sample() {
+  local topic="$1"
+  timeout 3 ros2 topic echo --once --qos-profile sensor_data \
+    "$topic" >/dev/null 2>&1 \
+    || timeout 3 ros2 topic echo --once --qos-reliability best_effort \
+    "$topic" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1 \
+    || timeout 3 ros2 topic echo --once --qos-reliability reliable \
+    "$topic" sensor_msgs/msg/PointCloud2 >/dev/null 2>&1
+}
+
 topics_with_types=''
 case "${USE_POINTCLOUD_ARG,,}" in
   auto)
@@ -135,17 +145,22 @@ case "${USE_POINTCLOUD_ARG,,}" in
       echo "[warn] Could not inspect ROS graph for PointCloud2 topics; leaving OAK pointcloud enabled."
       USE_POINTCLOUD_ARG=true
     elif topic_is_pointcloud "$POINTCLOUD_TOPIC_ARG" "$topics_with_types"; then
-      USE_POINTCLOUD_ARG=true
-      echo "[ok] pointcloud topic present: $POINTCLOUD_TOPIC_ARG"
+      if pointcloud_has_sample "$POINTCLOUD_TOPIC_ARG"; then
+        USE_POINTCLOUD_ARG=true
+        echo "[ok] pointcloud topic publishing data: $POINTCLOUD_TOPIC_ARG"
+      else
+        USE_POINTCLOUD_ARG=false
+        echo "[warn] $POINTCLOUD_TOPIC_ARG exists but no PointCloud2 samples arrived; disabling OAK pointcloud."
+      fi
     else
       candidate="$(first_pointcloud_topic "$topics_with_types" || true)"
-      if [ -n "$candidate" ]; then
-        echo "[warn] $POINTCLOUD_TOPIC_ARG is not visible; using PointCloud2 topic $candidate"
+      if [ -n "$candidate" ] && pointcloud_has_sample "$candidate"; then
+        echo "[warn] $POINTCLOUD_TOPIC_ARG is not visible; using active PointCloud2 topic $candidate"
         POINTCLOUD_TOPIC_ARG="$candidate"
         USE_POINTCLOUD_ARG=true
       else
-        echo "[warn] No PointCloud2 topic is visible; disabling OAK pointcloud for this safety run."
-        echo "       For full fusion, restart/check depthai and run: ros2 topic list -t | grep PointCloud2"
+        echo "[warn] No active PointCloud2 data is visible; disabling OAK pointcloud for this safety run."
+        echo "       For full fusion, run: PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh"
         USE_POINTCLOUD_ARG=false
       fi
     fi
@@ -162,8 +177,8 @@ case "${USE_POINTCLOUD_ARG,,}" in
     done
     if [ -n "$topics_with_types" ] && ! topic_is_pointcloud "$POINTCLOUD_TOPIC_ARG" "$topics_with_types"; then
       candidate="$(first_pointcloud_topic "$topics_with_types" || true)"
-      if [ -z "${POINTCLOUD_TOPIC+x}" ] && [ -n "$candidate" ]; then
-        echo "[warn] $POINTCLOUD_TOPIC_ARG is not visible; using PointCloud2 topic $candidate"
+      if [ -z "${POINTCLOUD_TOPIC+x}" ] && [ -n "$candidate" ] && pointcloud_has_sample "$candidate"; then
+        echo "[warn] $POINTCLOUD_TOPIC_ARG is not visible; using active PointCloud2 topic $candidate"
         POINTCLOUD_TOPIC_ARG="$candidate"
       else
         echo "[warn] Requested pointcloud topic is not visible: $POINTCLOUD_TOPIC_ARG"
@@ -171,6 +186,9 @@ case "${USE_POINTCLOUD_ARG,,}" in
         printf '%s\n' "$topics_with_types" \
           | awk 'index($0, "[sensor_msgs/msg/PointCloud2]") { print "       " $0 }'
       fi
+    elif [ -n "$topics_with_types" ] && ! pointcloud_has_sample "$POINTCLOUD_TOPIC_ARG"; then
+      echo "[warn] $POINTCLOUD_TOPIC_ARG exists but no PointCloud2 samples arrived."
+      echo "[warn] Project C will start, but OAK pointcloud fields will stay pc=0/pts=0 until data flows."
     fi
     ;;
   0|false|no|off)

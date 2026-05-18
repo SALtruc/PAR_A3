@@ -109,6 +109,12 @@ official driver in a separate terminal:
 bash tools/start_oak_pointcloud.sh
 ```
 
+The helper uses `driver.launch.py` with `rs_compat:=true` and
+`pointcloud.enable:=true` by default, then waits for a real `PointCloud2`
+sample before printing the Project C command. To compare DepthAI example
+launches, set `DEPTHAI_LAUNCH=pointcloud.launch.py` or
+`DEPTHAI_LAUNCH=rgbd_pcl.launch.py`.
+
 If the camera is already owned by the Husarion depthai snap, stop that snap for
 the session:
 
