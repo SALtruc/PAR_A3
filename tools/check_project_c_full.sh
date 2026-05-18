@@ -19,10 +19,11 @@ PROJECT_C_RESET_ROS2_DAEMON="${PROJECT_C_RESET_ROS2_DAEMON:-true}"
 # Project C assessment mode requires all robot sensors. Set this false only for
 # degraded demos where LIDAR/OAK are enough and ToF is intentionally disabled.
 PROJECT_C_REQUIRE_FULL_FUSION="${PROJECT_C_REQUIRE_FULL_FUSION:-true}"
+POINTCLOUD_TOPIC="${POINTCLOUD_TOPIC:-/oak/points}"
 
 required_topics=(
   "/scan_filtered"
-  "/oak/points"
+  "$POINTCLOUD_TOPIC"
   "/range/fl"
   "/range/fr"
   "/range/rl"
@@ -85,6 +86,7 @@ echo "[ok] Package: $actual_prefix"
 echo "[ok] RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
 echo "[ok] PROJECT_C_LOCAL_ONLY=$PROJECT_C_LOCAL_ONLY"
 echo "[ok] PROJECT_C_REQUIRE_FULL_FUSION=$PROJECT_C_REQUIRE_FULL_FUSION"
+echo "[ok] POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC"
 if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1" ]; then
   echo "[ok] ROS discovery is restricted to localhost"
 fi
@@ -129,6 +131,15 @@ echo
 echo "[info] OAK topics:"
 printf '%s\n' "$topics" | grep -E '^/oak|^/camera|depth' || true
 echo
+echo "[info] PointCloud2 topics:"
+if command -v timeout >/dev/null 2>&1; then
+  topics_with_types="$(timeout 8 ros2 topic list -t 2>/dev/null || true)"
+else
+  topics_with_types="$(ros2 topic list -t 2>/dev/null || true)"
+fi
+printf '%s\n' "$topics_with_types" \
+  | awk 'index($0, "[sensor_msgs/msg/PointCloud2]") { print "        " $0 }'
+echo
 echo "[info] range/ToF topics:"
 printf '%s\n' "$topics" | grep -E 'range|tof|vl53|distance' || true
 
@@ -144,6 +155,10 @@ if [ "$missing" -ne 0 ] && {
   echo
   echo "        Diagnose missing ToF with:"
   echo "        ros2 topic list | sort | grep -E 'range|tof|vl53|distance'"
+  echo "        Diagnose missing OAK pointcloud with:"
+  echo "        ros2 topic list -t | grep PointCloud2"
+  echo "        bash tools/start_oak_pointcloud.sh"
+  echo "        POINTCLOUD_TOPIC=/actual/points bash tools/run_project_c_full.sh"
   echo "        sudo snap logs rosbot -n 100"
   exit 6
 fi

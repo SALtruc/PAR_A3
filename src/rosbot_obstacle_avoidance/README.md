@@ -96,9 +96,30 @@ ros2 topic echo --once /range/fr
 ros2 topic echo --once /obstacle_representation
 ```
 
-Do not run the motors if `/battery` is below `11.1V`. The controller will hold
-`EMERGENCY` and publish zero velocity when the battery topic is missing, stale,
-or below `min_battery_voltage`.
+If the OAK pointcloud topic is named differently on the robot, find it with
+`ros2 topic list -t | grep PointCloud2` and run with
+`POINTCLOUD_TOPIC=/actual/points`. The safety runner disables OAK pointcloud
+for that run when no `PointCloud2` topic is visible; `run_project_c_full.sh`
+keeps treating it as a required full-fusion input.
+
+If the built-in depthai snap is not publishing `/oak/points`, start the
+official driver in a separate terminal:
+
+```bash
+bash tools/start_oak_pointcloud.sh
+```
+
+If the camera is already owned by the Husarion depthai snap, stop that snap for
+the session:
+
+```bash
+PROJECT_C_STOP_DEPTHAI_SNAP=true bash tools/start_oak_pointcloud.sh
+```
+
+Do not run the motors if `/battery` is physically unsafe for the pack. The
+controller can hold `EMERGENCY` and publish zero velocity when
+`require_battery_ok:=true` and the battery topic is missing, stale, or below
+`min_battery_voltage`.
 
 ## Sensor Ablation
 
@@ -165,6 +186,6 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `side_guard_distance` | `0.015` | Only this close triggers side escape |
 | `side_escape_distance` | `0.03` | Side clearance needed to leave side escape |
 | `contact_stall_sec` | `5.0` | Forward command plus near-zero odom for this long triggers backup then rotate |
-| `require_battery_ok` | `true` | Requires a fresh battery reading before motion |
-| `min_battery_voltage` | `11.1` | Holds zero velocity below this pack voltage |
-| `warn_battery_voltage` | `11.4` | Logs a low-battery warning but still allows motion |
+| `require_battery_ok` | `false` | When true, requires a fresh battery reading before motion |
+| `min_battery_voltage` | `8.5` | Holds zero velocity below this pack voltage when `require_battery_ok` is true |
+| `warn_battery_voltage` | `9.0` | Logs a low-battery warning but still allows motion |

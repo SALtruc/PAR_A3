@@ -169,6 +169,7 @@ class ObstaclePerceptionNode(Node):
         depth_topic = self.get_parameter('depth_topic').value
         self._depth_topic = depth_topic
         pointcloud_topic = self.get_parameter('pointcloud_topic').value
+        self._pointcloud_topic = pointcloud_topic
         tof_topic = self.get_parameter('tof_topic').value
         tof_topics = _split_topics(self.get_parameter('tof_topics').value)
         if not tof_topics:
@@ -984,8 +985,8 @@ class ObstaclePerceptionNode(Node):
                 and self._last_pointcloud_time is None
                 and now - self._start_time >= 5.0):
             self._warn_pointcloud(
-                'No PointCloud2 messages received yet. Check '
-                'ros2 topic type /oak/points and ros2 topic hz /oak/points.'
+                f'No PointCloud2 messages received from {self._pointcloud_topic}. '
+                'Check husarion-depthai, or run ros2 topic list -t | grep PointCloud2.'
             )
         if (
                 self._use_depth

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Launch Project C full-fusion mode from this repository's install space.
+# Launch Project C safety mode from this repository's install space.
 #
 # Full fusion for the ROSbot 3 PRO means:
 #   - S2 LIDAR: /scan_filtered
 #   - OAK-D depth stream as PointCloud2: /oak/points
 #   - VL53L0X ToF: /range/fl,/range/fr,/range/rl,/range/rr
+# By default this runner auto-enables OAK pointcloud only when a PointCloud2
+# topic is visible. Set USE_POINTCLOUD=true and POINTCLOUD_TOPIC=/actual/topic
+# when you need to force a specific full-fusion configuration.
 
 set -euo pipefail
 
@@ -90,10 +93,91 @@ if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1"
   echo "[ok] ROS discovery is restricted to localhost"
 fi
 
+POINTCLOUD_TOPIC_ARG="${POINTCLOUD_TOPIC:-/oak/points}"
+USE_POINTCLOUD_ARG="${USE_POINTCLOUD:-auto}"
+
+list_topics_with_types() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 5 ros2 topic list -t 2>/dev/null || true
+  else
+    ros2 topic list -t 2>/dev/null || true
+  fi
+}
+
+topic_is_pointcloud() {
+  local topic="$1"
+  local topics_with_types="$2"
+  printf '%s\n' "$topics_with_types" | awk -v topic="$topic" '
+    $1 == topic && index($0, "[sensor_msgs/msg/PointCloud2]") { found = 1 }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+first_pointcloud_topic() {
+  local topics_with_types="$1"
+  printf '%s\n' "$topics_with_types" \
+    | awk 'index($0, "[sensor_msgs/msg/PointCloud2]") { print $1 }' \
+    | grep -Ei 'oak|camera|depth|stereo|point|cloud' \
+    | head -n 1
+}
+
+topics_with_types=''
+case "${USE_POINTCLOUD_ARG,,}" in
+  auto)
+    for attempt in 1 2 3; do
+      topics_with_types="$(list_topics_with_types)"
+      [ -n "$topics_with_types" ] && break
+      echo "[wait] ROS graph not visible for pointcloud preflight, retry ${attempt}/3..."
+      sleep 1
+    done
+    if [ -z "$topics_with_types" ]; then
+      echo "[warn] Could not inspect ROS graph for PointCloud2 topics; leaving OAK pointcloud enabled."
+      USE_POINTCLOUD_ARG=true
+    elif topic_is_pointcloud "$POINTCLOUD_TOPIC_ARG" "$topics_with_types"; then
+      USE_POINTCLOUD_ARG=true
+      echo "[ok] pointcloud topic present: $POINTCLOUD_TOPIC_ARG"
+    else
+      candidate="$(first_pointcloud_topic "$topics_with_types" || true)"
+      if [ -n "$candidate" ]; then
+        echo "[warn] $POINTCLOUD_TOPIC_ARG is not visible; using PointCloud2 topic $candidate"
+        POINTCLOUD_TOPIC_ARG="$candidate"
+        USE_POINTCLOUD_ARG=true
+      else
+        echo "[warn] No PointCloud2 topic is visible; disabling OAK pointcloud for this safety run."
+        echo "       For full fusion, restart/check depthai and run: ros2 topic list -t | grep PointCloud2"
+        USE_POINTCLOUD_ARG=false
+      fi
+    fi
+    ;;
+  1|true|yes|on)
+    USE_POINTCLOUD_ARG=true
+    topics_with_types="$(list_topics_with_types)"
+    if [ -n "$topics_with_types" ] && ! topic_is_pointcloud "$POINTCLOUD_TOPIC_ARG" "$topics_with_types"; then
+      candidate="$(first_pointcloud_topic "$topics_with_types" || true)"
+      if [ -z "${POINTCLOUD_TOPIC+x}" ] && [ -n "$candidate" ]; then
+        echo "[warn] $POINTCLOUD_TOPIC_ARG is not visible; using PointCloud2 topic $candidate"
+        POINTCLOUD_TOPIC_ARG="$candidate"
+      else
+        echo "[warn] Requested pointcloud topic is not visible: $POINTCLOUD_TOPIC_ARG"
+      fi
+    fi
+    ;;
+  0|false|no|off)
+    USE_POINTCLOUD_ARG=false
+    ;;
+  *)
+    echo "[warn] Unknown USE_POINTCLOUD=$USE_POINTCLOUD_ARG; disabling OAK pointcloud."
+    USE_POINTCLOUD_ARG=false
+    ;;
+esac
+
+echo "[ok] POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC_ARG"
+echo "[ok] USE_POINTCLOUD=$USE_POINTCLOUD_ARG"
+
 exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
   depth_topic:="${DEPTH_TOPIC:-/oak/stereo/image_raw}" \
-  pointcloud_topic:="${POINTCLOUD_TOPIC:-/oak/points}" \
+  pointcloud_topic:="${POINTCLOUD_TOPIC_ARG}" \
   pointcloud_qos:="${POINTCLOUD_QOS:-reliable_transient_local}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
   tof_msg_type:="${TOF_MSG_TYPE:-scan}" \
@@ -103,7 +187,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   odom_topic:="${ODOM_TOPIC:-/rosbot_base_controller/odom}" \
   imu_topic:="${IMU_TOPIC:-/imu_broadcaster/imu}" \
   use_depth:="${USE_DEPTH:-false}" \
-  use_pointcloud:="${USE_POINTCLOUD:-true}" \
+  use_pointcloud:="${USE_POINTCLOUD_ARG}" \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
   local_only:="${PROJECT_C_LOCAL_ONLY}" \
