@@ -191,10 +191,13 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `max_speed` | `0.24` | Roaming speed in clear space |
+| `max_speed` | `0.215` | Roaming speed in clear space |
 | `clear_distance` | `0.35` | Front path distance treated as clear |
-| `stop_distance` | `0.15` | Back up immediately under this front distance |
-| `dodge_clearance` | `0.015` | Side clearance needed to avoid calling a dead end |
+| `stop_distance` | `0.25` | Confirmed static obstacle distance that starts dodge |
+| `low_obstacle_distance` | `0.60` | OAK low-view distance that starts avoidance for low objects such as slippers/feet |
+| `low_obstacle_backup_distance` | `0.35` | OAK low-view distance that backs up instead of creeping forward |
+| `low_obstacle_min_points` | `20` | Minimum low-region pointcloud points before low-object avoidance is trusted |
+| `dodge_clearance` | `0.03` | Side clearance needed to avoid calling a dead end |
 | `observe_frames` | `8` | Frames to observe before dodging |
 | `clear_observe_frames` | `3` | Frames to verify LIDAR/depth disagreement before driving straight |
 | `dodge_step_deg` | `30.0` | Gentle dodge limit; keeps dynamic avoidance below 45 degrees |

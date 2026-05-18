@@ -303,11 +303,15 @@ echo "[ok] POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC_ARG"
 echo "[ok] DEPTH_TOPIC=$DEPTH_TOPIC_ARG"
 echo "[ok] USE_DEPTH=$USE_DEPTH_ARG"
 echo "[ok] USE_POINTCLOUD=$USE_POINTCLOUD_ARG"
+echo "[ok] LOW_OBSTACLE_DISTANCE=${LOW_OBSTACLE_DISTANCE:-0.60}"
+echo "[ok] LOW_OBSTACLE_BACKUP_DISTANCE=${LOW_OBSTACLE_BACKUP_DISTANCE:-0.35}"
+echo "[ok] POINTCLOUD_USE_TF=${POINTCLOUD_USE_TF:-false}"
 
 exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
   depth_topic:="${DEPTH_TOPIC_ARG}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC_ARG}" \
+  pointcloud_use_tf:="${POINTCLOUD_USE_TF:-false}" \
   pointcloud_qos:="${POINTCLOUD_QOS:-auto}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
   tof_msg_type:="${TOF_MSG_TYPE:-scan}" \
@@ -324,6 +328,9 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   max_speed:="${MAX_SPEED:-0.215}" \
   backup_speed:="${BACKUP_SPEED:-0.06}" \
   backup_sec:="${BACKUP_SEC:-0.70}" \
+  low_obstacle_distance:="${LOW_OBSTACLE_DISTANCE:-0.60}" \
+  low_obstacle_backup_distance:="${LOW_OBSTACLE_BACKUP_DISTANCE:-0.35}" \
+  low_obstacle_min_points:="${LOW_OBSTACLE_MIN_POINTS:-20}" \
   side_escape_release_distance:="${SIDE_ESCAPE_RELEASE_DISTANCE:-0.08}" \
   side_escape_forward_speed:="${SIDE_ESCAPE_FORWARD_SPEED:-0.025}" \
   side_escape_counter_scale:="${SIDE_ESCAPE_COUNTER_SCALE:-0.60}" \

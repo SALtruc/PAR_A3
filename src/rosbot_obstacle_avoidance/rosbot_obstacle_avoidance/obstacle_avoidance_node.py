@@ -119,6 +119,9 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_distance', 0.35)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
+        self.declare_parameter('low_obstacle_distance', 0.60)
+        self.declare_parameter('low_obstacle_backup_distance', 0.35)
+        self.declare_parameter('low_obstacle_min_points', 20)
         self.declare_parameter('front_tof_obstacle_distance', 0.30)
         self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('dodge_clearance', 0.03)
@@ -210,6 +213,21 @@ class ObstacleAvoidanceNode(Node):
         self._hard_backup = max(
             0.0,
             min(float(p('hard_backup_distance').value), self._stop * 0.95),
+        )
+        self._low_obstacle_distance = max(
+            self._clear,
+            float(p('low_obstacle_distance').value),
+        )
+        self._low_obstacle_backup = max(
+            self._hard_backup,
+            min(
+                float(p('low_obstacle_backup_distance').value),
+                self._low_obstacle_distance,
+            ),
+        )
+        self._low_obstacle_min_points = max(
+            1,
+            int(p('low_obstacle_min_points').value),
         )
         self._front_tof_obstacle = max(0.0, float(p('front_tof_obstacle_distance').value))
         self._front_tof_hard = max(
@@ -351,6 +369,7 @@ class ObstacleAvoidanceNode(Node):
             'PROJECT C SAFETY NAV - ACTIVE SETTINGS',
             sep,
             f'front observe <= {_cm(self._clear)} | dodge <= {_cm(self._stop)} | hard backup <= {_cm(self._hard_backup)}',
+            f'low obstacle <= {_cm(self._low_obstacle_distance)} | low backup <= {_cm(self._low_obstacle_backup)} | low min pts={self._low_obstacle_min_points}',
             f'ToF emergency <= {_cm(self._front_tof_hard)} | side scrape <= {_cm(self._side_guard)} | rear stop <= {_cm(self._rear_stop)}',
             f'recovery: backup {self._backup_sec:.2f}s, rotate commit {self._rotate_commit_sec:.2f}s',
             f'side escape: release >= {_cm(self._side_escape_release)}, S-turn {self._side_escape_sec:.2f}s',
@@ -497,6 +516,12 @@ class ObstacleAvoidanceNode(Node):
 
         snap = self._snap()
         front = self._effective_front(snap)
+
+        if not self._has_obstacle_sensor(snap):
+            self._set_state(STOPPED)
+            self._log('no_obstacle_data', snap)
+            self._publish_cmd(twist)
+            return
 
         if self._handle_tilt_recovery(twist, snap, now):
             self._publish_cmd(twist)
@@ -733,6 +758,14 @@ class ObstacleAvoidanceNode(Node):
             self._start_backup()
             return True
 
+        # Low obstacles such as slippers/feet should be avoided as soon as the
+        # OAK low region is confident. Do not creep down to stop_distance,
+        # because the robot can physically ride over them before LIDAR agrees.
+        if self._low_obstacle_hit(snap):
+            self._static_confirmed = False
+            self._start_dodge(snap)
+            return self._handle_dodge(twist, snap, front, now)
+
         # If still outside stop_distance, creep forward slowly.
         # Robot approaches to stop_distance, then dodges.
         if front > self._stop:
@@ -956,7 +989,7 @@ class ObstacleAvoidanceNode(Node):
             twist.angular.z = self._turn_dir * self._rot_ang
             return True
 
-        if front > self._clear or self._depth_confirms_clear(snap):
+        if (front > self._clear or self._depth_confirms_clear(snap)) and not self._low_obstacle_hit(snap):
             self._set_state(DRIVE)
             return False
 
@@ -978,11 +1011,59 @@ class ObstacleAvoidanceNode(Node):
     # Decision helpers
     # ---------------------------------------------------------------------
 
+    def _valid_oak_low(self, snap: Snap) -> bool:
+        return (
+            snap.pointcloud_ok
+            and math.isfinite(snap.front_oak_low)
+            and snap.front_oak_low_count >= self._low_obstacle_min_points
+        )
+
+    def _has_obstacle_sensor(self, snap: Snap) -> bool:
+        return (
+            snap.lidar_ok
+            or snap.depth_ok
+            or snap.depth_image_ok
+            or snap.pointcloud_ok
+            or any(math.isfinite(value) for value in (
+                snap.front_lidar,
+                snap.front_depth,
+                snap.front_tof,
+                snap.left,
+                snap.right,
+                snap.rear,
+            ))
+        )
+
+    def _valid_depth_low(self, snap: Snap) -> bool:
+        return snap.depth_image_ok and math.isfinite(snap.front_depth_low)
+
+    def _low_obstacle_hit(self, snap: Snap) -> bool:
+        return (
+            (self._valid_oak_low(snap)
+             and snap.front_oak_low <= self._low_obstacle_distance)
+            or
+            (self._valid_depth_low(snap)
+             and snap.front_depth_low <= self._low_obstacle_distance)
+        )
+
+    def _low_obstacle_backup_needed(self, snap: Snap) -> bool:
+        return (
+            (self._valid_oak_low(snap)
+             and snap.front_oak_low <= self._low_obstacle_backup)
+            or
+            (self._valid_depth_low(snap)
+             and snap.front_depth_low <= self._low_obstacle_backup)
+        )
+
     def _effective_front(self, snap: Snap) -> float:
         """Return the conservative fused front distance used by the FSM."""
         if math.isfinite(snap.front_fused):
             return snap.front_fused
         candidates = [snap.front_lidar, snap.front_depth]
+        if self._valid_oak_low(snap):
+            candidates.append(snap.front_oak_low)
+        if self._valid_depth_low(snap):
+            candidates.append(snap.front_depth_low)
         if math.isfinite(snap.front_tof) and snap.front_tof <= self._front_tof_obstacle:
             candidates.append(snap.front_tof)
         finite = [value for value in candidates if math.isfinite(value)]
@@ -1000,6 +1081,7 @@ class ObstacleAvoidanceNode(Node):
             and math.isfinite(snap.front_depth)
             and snap.front_depth <= self._clear
         )
+        low_suspicious = self._low_obstacle_hit(snap)
         dynamic_suspicious = (
             snap.dynamic
             and math.isfinite(front)
@@ -1009,10 +1091,13 @@ class ObstacleAvoidanceNode(Node):
             fused_suspicious
             or lidar_suspicious
             or depth_suspicious
+            or low_suspicious
             or dynamic_suspicious
         )
 
     def _depth_confirms_clear(self, snap: Snap) -> bool:
+        if self._low_obstacle_hit(snap):
+            return False
         return (
             snap.depth_ok
             and math.isfinite(snap.front_depth)
@@ -1022,11 +1107,20 @@ class ObstacleAvoidanceNode(Node):
                 or not math.isfinite(snap.front_lidar)
                 or snap.front_lidar >= self._clear
             )
+            and (
+                not math.isfinite(snap.front_tof)
+                or snap.front_tof >= self._clear
+            )
+            and (
+                not math.isfinite(snap.front_fused)
+                or snap.front_fused >= self._clear
+            )
             and not snap.dynamic
         )
 
     def _too_close(self, snap: Snap) -> bool:
-        # Hard safety: backup only when the front is closer than the dodge trigger.
+        # Hard safety: backup only when the front is closer than the dodge
+        # trigger, except low OAK obstacles which need a larger contact buffer.
         # At stop_distance a confirmed static obstacle should dodge, not reverse.
         lidar_too_close = (
             math.isfinite(snap.front_lidar)
@@ -1036,11 +1130,12 @@ class ObstacleAvoidanceNode(Node):
             math.isfinite(snap.front_depth)
             and snap.front_depth <= self._hard_backup
         )
+        low_too_close = self._low_obstacle_backup_needed(snap)
         tof_too_close = (
             math.isfinite(snap.front_tof)
             and snap.front_tof <= self._front_tof_hard
         )
-        return lidar_too_close or depth_too_close or tof_too_close
+        return lidar_too_close or depth_too_close or low_too_close or tof_too_close
 
     def _side_danger(self, snap: Snap) -> bool:
         left_close = math.isfinite(snap.left) and snap.left < self._side_guard
@@ -1318,22 +1413,23 @@ class ObstacleAvoidanceNode(Node):
                 and snap is not None and not snap.dynamic and front > self._stop)
             else ''
         )
+        low_hit = self._low_obstacle_hit(snap)
         obstacle = (
             front <= self._clear
             or snap.left <= self._side_guard
             or snap.right <= self._side_guard
             or snap.rear <= self._rear_stop
+            or low_hit
             or snap.dynamic
             or snap.tof_emergency
         )
         oak_low_hit = (
-            math.isfinite(snap.front_oak_low)
-            and snap.front_oak_low <= self._clear
-            and snap.front_oak_low_count > 0
+            self._valid_oak_low(snap)
+            and snap.front_oak_low <= self._low_obstacle_distance
         )
         depth_low_hit = (
-            math.isfinite(snap.front_depth_low)
-            and snap.front_depth_low <= self._clear
+            self._valid_depth_low(snap)
+            and snap.front_depth_low <= self._low_obstacle_distance
         )
         lidar_front_hit = (
             math.isfinite(snap.front_lidar)

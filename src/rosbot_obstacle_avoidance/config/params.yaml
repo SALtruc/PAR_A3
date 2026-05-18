@@ -47,7 +47,7 @@ obstacle_perception:
     # OAK point cloud supports low/side obstacles and the full-fusion trial.
     pointcloud_frame: optical
     pointcloud_target_frame: base_link
-    pointcloud_use_tf: true
+    pointcloud_use_tf: false
     pointcloud_tf_timeout_sec: 0.03
     pointcloud_qos: reliable_transient_local
     pointcloud_percentile: 10.0
@@ -124,6 +124,9 @@ obstacle_avoidance:
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
     stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
+    low_obstacle_distance: 0.60
+    low_obstacle_backup_distance: 0.35
+    low_obstacle_min_points: 20
     front_tof_obstacle_distance: 0.30
     front_tof_hard_distance: 0.12
     dodge_clearance: 0.03      # min side clearance for dead-end recovery
