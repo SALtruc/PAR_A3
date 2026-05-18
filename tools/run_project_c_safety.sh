@@ -11,11 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISTRO="${ROS_DISTRO:-jazzy}"
 EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
-# rmw_fastrtps_cpp segfaults on this ROSbot image; keep CycloneDDS for our nodes.
-# The depthai snap uses FastRTPS (ros.transport=udp) but CycloneDDS and FastRTPS
-# interoperate via standard RTPS when both are on the same interface — the same
-# path that delivers firmware ToF/odom topics to our CycloneDDS nodes.
-RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+# husarion-depthai snap bundles rmw_fastrtps_cpp only (librmw_cyclonedds_cpp.so
+# is absent). Use FastRTPS so our nodes share the same RMW as the snap.
+# Override via: PROJECT_C_RMW_IMPLEMENTATION=rmw_cyclonedds_cpp bash $0
+RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 # Keep this off by default because ROSbot firmware/sensor participants may be
 # exposed through robot-local network namespaces instead of localhost.
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
