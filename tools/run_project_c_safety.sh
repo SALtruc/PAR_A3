@@ -11,9 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISTRO="${ROS_DISTRO:-jazzy}"
 EXPECTED_PREFIX="${ROOT}/install/rosbot_obstacle_avoidance"
-# FastRTPS segfaults on the lab ROSbot image. Force CycloneDDS by default so
-# running this script does not depend on the user's current shell exports.
-RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
+# husarion-depthai snap bundles rmw_fastrtps_cpp only (librmw_cyclonedds_cpp.so
+# is absent). Use FastRTPS so our nodes share the same RMW as the snap.
+# Override via: PROJECT_C_RMW_IMPLEMENTATION=rmw_cyclonedds_cpp bash $0
+RMW_IMPLEMENTATION="${PROJECT_C_RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 # Keep this off by default because ROSbot firmware/sensor participants may be
 # exposed through robot-local network namespaces instead of localhost.
 PROJECT_C_LOCAL_ONLY="${PROJECT_C_LOCAL_ONLY:-false}"
@@ -66,19 +67,12 @@ case "${PROJECT_C_LOCAL_ONLY,,}" in
     ;;
 esac
 
-# husarion-depthai snap uses rmw_fastrtps_cpp (ros.transport=udp — all interfaces).
-# Our nodes use rmw_cyclonedds_cpp. CycloneDDS and FastRTPS interoperate via the
-# standard RTPS protocol when both are on the same network interface; the firmware
-# topics (/range/*, /battery, etc.) already prove this works on this image.
-# Do NOT restrict CYCLONEDDS_URI to loopback-only: the depthai snap does not
-# bundle librmw_cyclonedds_cpp.so, so udp-lo-cyclone is not available.
-# Always clear any shell-exported CYCLONEDDS_URI so the script's own behaviour is
-# predictable regardless of what the caller had set for diagnostic purposes.
+# Always clear stale CYCLONEDDS_URI left from diagnostic sessions so the
+# script's RMW behaviour is predictable regardless of shell exports.
 if [ -n "${CYCLONEDDS_URI:-}" ]; then
-  echo "[warn] Clearing shell-exported CYCLONEDDS_URI (was: ${CYCLONEDDS_URI})"
+  echo "[warn] Clearing shell-exported CYCLONEDDS_URI"
   unset CYCLONEDDS_URI
 fi
-echo "[ok] CYCLONEDDS_URI unset — CycloneDDS default (all interfaces, multicast)"
 
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
 if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then
