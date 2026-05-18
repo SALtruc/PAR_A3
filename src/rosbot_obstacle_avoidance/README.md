@@ -194,9 +194,10 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `max_speed` | `0.215` | Roaming speed in clear space |
 | `clear_distance` | `0.35` | Front path distance treated as clear |
 | `stop_distance` | `0.25` | Confirmed static obstacle distance that starts dodge |
-| `low_obstacle_distance` | `0.60` | OAK low-view distance that starts avoidance for low objects such as slippers/feet |
-| `low_obstacle_backup_distance` | `0.35` | OAK low-view distance that backs up instead of creeping forward |
-| `low_obstacle_min_points` | `20` | Minimum low-region pointcloud points before low-object avoidance is trusted |
+| `low_obstacle_distance` | `0.45` | OAK low-view distance that starts avoidance for low objects without the old long-range false positives |
+| `low_obstacle_backup_distance` | `0.20` | OAK low-view distance that backs up before the chassis rides over a low object |
+| `low_obstacle_min_points` | `8` | Minimum low-region pointcloud points before low-object avoidance is trusted |
+| `low_obstacle_hold_sec` | `0.70` | Keeps a recent low-object hit alive across brief pointcloud dropouts |
 | `dodge_clearance` | `0.03` | Side clearance needed to avoid calling a dead end |
 | `observe_frames` | `8` | Frames to observe before dodging |
 | `clear_observe_frames` | `3` | Frames to verify LIDAR/depth disagreement before driving straight |

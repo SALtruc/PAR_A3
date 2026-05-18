@@ -119,9 +119,10 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_distance', 0.35)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
-        self.declare_parameter('low_obstacle_distance', 0.60)
-        self.declare_parameter('low_obstacle_backup_distance', 0.35)
-        self.declare_parameter('low_obstacle_min_points', 20)
+        self.declare_parameter('low_obstacle_distance', 0.45)
+        self.declare_parameter('low_obstacle_backup_distance', 0.20)
+        self.declare_parameter('low_obstacle_min_points', 8)
+        self.declare_parameter('low_obstacle_hold_sec', 0.70)
         self.declare_parameter('front_tof_obstacle_distance', 0.30)
         self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('pre_dodge_backup_enabled', False)
@@ -231,6 +232,10 @@ class ObstacleAvoidanceNode(Node):
         self._low_obstacle_min_points = max(
             1,
             int(p('low_obstacle_min_points').value),
+        )
+        self._low_obstacle_hold_sec = max(
+            0.0,
+            float(p('low_obstacle_hold_sec').value),
         )
         self._front_tof_obstacle = max(0.0, float(p('front_tof_obstacle_distance').value))
         self._front_tof_hard = max(
@@ -342,6 +347,13 @@ class ObstacleAvoidanceNode(Node):
         self._static_confirmed = False                 # True after observe_frames with obstacle
         self._backup_then_observe = False
         self._backup_then_dodge = False
+        self._held_oak_low = math.inf
+        self._held_oak_low_count = 0
+        self._held_oak_sample_count = 0
+        self._held_oak_fallback_count = 0
+        self._held_oak_until = 0.0
+        self._held_depth_low = math.inf
+        self._held_depth_low_until = 0.0
         self._last_surprise_backup = -math.inf
         self._odom_linear = 0.0
         self._odom_angular = 0.0
@@ -378,7 +390,7 @@ class ObstacleAvoidanceNode(Node):
             'PROJECT C SAFETY NAV - ACTIVE SETTINGS',
             sep,
             f'front observe <= {_cm(self._clear)} | dodge <= {_cm(self._stop)} | hard backup <= {_cm(self._hard_backup)}',
-            f'low obstacle <= {_cm(self._low_obstacle_distance)} | low backup <= {_cm(self._low_obstacle_backup)} | low min pts={self._low_obstacle_min_points}',
+            f'low obstacle <= {_cm(self._low_obstacle_distance)} | low backup <= {_cm(self._low_obstacle_backup)} | low min pts={self._low_obstacle_min_points} | hold={self._low_obstacle_hold_sec:.1f}s',
             f'ToF emergency <= {_cm(self._front_tof_hard)} | side scrape <= {_cm(self._side_guard)} | rear stop <= {_cm(self._rear_stop)}',
             f'recovery: backup {self._backup_sec:.2f}s, rotate commit {self._rotate_commit_sec:.2f}s',
             f'side escape: release >= {_cm(self._side_escape_release)}, S-turn {self._side_escape_sec:.2f}s',
@@ -524,6 +536,7 @@ class ObstacleAvoidanceNode(Node):
             return
 
         snap = self._snap()
+        self._apply_low_obstacle_hold(snap, now)
         front = self._effective_front(snap)
 
         if not self._has_obstacle_sensor(snap):
@@ -1066,6 +1079,36 @@ class ObstacleAvoidanceNode(Node):
 
     def _valid_depth_low(self, snap: Snap) -> bool:
         return snap.depth_image_ok and math.isfinite(snap.front_depth_low)
+
+    def _apply_low_obstacle_hold(self, snap: Snap, now: float):
+        if self._low_obstacle_hold_sec <= 0.0:
+            return
+
+        oak_valid = self._valid_oak_low(snap)
+        if oak_valid and snap.front_oak_low <= self._low_obstacle_distance:
+            self._held_oak_low = snap.front_oak_low
+            self._held_oak_low_count = snap.front_oak_low_count
+            self._held_oak_sample_count = snap.front_oak_sample_count
+            self._held_oak_fallback_count = snap.front_oak_fallback_count
+            self._held_oak_until = now + self._low_obstacle_hold_sec
+        elif oak_valid and snap.front_oak_low > self._low_obstacle_distance:
+            self._held_oak_until = 0.0
+        elif now <= self._held_oak_until and math.isfinite(self._held_oak_low):
+            snap.front_oak_low = self._held_oak_low
+            snap.front_oak_low_count = self._held_oak_low_count
+            snap.front_oak_sample_count = self._held_oak_sample_count
+            snap.front_oak_fallback_count = self._held_oak_fallback_count
+            snap.pointcloud_ok = True
+
+        depth_valid = self._valid_depth_low(snap)
+        if depth_valid and snap.front_depth_low <= self._low_obstacle_distance:
+            self._held_depth_low = snap.front_depth_low
+            self._held_depth_low_until = now + self._low_obstacle_hold_sec
+        elif depth_valid and snap.front_depth_low > self._low_obstacle_distance:
+            self._held_depth_low_until = 0.0
+        elif now <= self._held_depth_low_until and math.isfinite(self._held_depth_low):
+            snap.front_depth_low = self._held_depth_low
+            snap.depth_image_ok = True
 
     def _low_obstacle_hit(self, snap: Snap) -> bool:
         return (

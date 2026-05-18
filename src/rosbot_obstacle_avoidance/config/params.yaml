@@ -58,14 +58,14 @@ obstacle_perception:
     # vertical = -y_optical (up=positive). Camera ~17cm from ground.
     # Floor: vertical ≈ -0.17. Half Rosbot height (11cm): vertical ≈ -0.06.
     # Only capture objects below camera level (LIDAR blind zone).
-    pointcloud_low_min_height_m: -0.25
-    pointcloud_low_max_height_m: -0.05
-    pointcloud_low_center_half_width_m: 0.32
+    pointcloud_low_min_height_m: -0.35
+    pointcloud_low_max_height_m: 0.15
+    pointcloud_low_center_half_width_m: 0.38
     pointcloud_low_min_points: 1
     pointcloud_min_forward_m: 0.02
     pointcloud_max_forward_m: 4.00
     pointcloud_sample_step: 1
-    pointcloud_roi_stride_px: 6
+    pointcloud_roi_stride_px: 4
     pointcloud_process_hz: 8.0
     pointcloud_unorganized_max_points: 8000
 
@@ -127,9 +127,10 @@ obstacle_avoidance:
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
     stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
-    low_obstacle_distance: 0.35        # react same range as LIDAR clear_distance
-    low_obstacle_backup_distance: 0.12  # emergency backup for low obstacles at 12 cm
-    low_obstacle_min_points: 20
+    low_obstacle_distance: 0.45        # early low-object reaction without the old 60 cm false positives
+    low_obstacle_backup_distance: 0.20  # backup for low obstacles before the chassis rides over them
+    low_obstacle_min_points: 8
+    low_obstacle_hold_sec: 0.70
     front_tof_obstacle_distance: 0.30
     front_tof_hard_distance: 0.12
     # Back up slightly before pivoting so the robot has side clearance during the arc.
