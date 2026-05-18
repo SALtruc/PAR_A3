@@ -72,11 +72,13 @@ esac
 # topics (/range/*, /battery, etc.) already prove this works on this image.
 # Do NOT restrict CYCLONEDDS_URI to loopback-only: the depthai snap does not
 # bundle librmw_cyclonedds_cpp.so, so udp-lo-cyclone is not available.
+# Always clear any shell-exported CYCLONEDDS_URI so the script's own behaviour is
+# predictable regardless of what the caller had set for diagnostic purposes.
 if [ -n "${CYCLONEDDS_URI:-}" ]; then
-  echo "[ok] CYCLONEDDS_URI (user-defined): ${CYCLONEDDS_URI}"
-else
-  echo "[ok] CYCLONEDDS_URI unset — CycloneDDS default (all interfaces, multicast)"
+  echo "[warn] Clearing shell-exported CYCLONEDDS_URI (was: ${CYCLONEDDS_URI})"
+  unset CYCLONEDDS_URI
 fi
+echo "[ok] CYCLONEDDS_URI unset — CycloneDDS default (all interfaces, multicast)"
 
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
 if [ "$actual_prefix" != "$EXPECTED_PREFIX" ]; then
