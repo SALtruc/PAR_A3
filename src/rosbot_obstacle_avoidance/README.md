@@ -81,6 +81,13 @@ ros2 topic echo /collision_monitor_state
 ```
 
 Logs are written to `~/rosbot_obstacle_logs/project_c_trial_<timestamp>.csv`.
+The `[NAV]` console line also reports the OAK depth-image low ROI as
+`depth_img=ok img_front=... low=... low_dist=...`. This is separate from
+`oak_low=...`, which is pointcloud-only, so low obstacles such as feet can
+still be documented when `/oak/points` is visible but not publishing samples.
+The CSV includes the same depth evidence in `depth_image_front_min`,
+`depth_image_low_front_min`, `depth_image_available`, and pointcloud diagnostic
+columns.
 
 ## Pre-Run Safety Check
 
@@ -101,6 +108,11 @@ If the OAK pointcloud topic is named differently on the robot, find it with
 `POINTCLOUD_TOPIC=/actual/points`. The safety runner disables OAK pointcloud
 for that run when no `PointCloud2` topic is visible; `run_project_c_full.sh`
 keeps treating it as a required full-fusion input.
+
+OAK depth image is checked separately from pointcloud. `run_project_c_safety.sh`
+uses `USE_DEPTH=auto` by default and will enable an active depth `Image` topic
+when one is publishing, even if `/oak/points` is not usable. Force a known depth
+topic with `DEPTH_TOPIC=/actual/depth USE_DEPTH=true`.
 
 If the built-in depthai snap is not publishing `/oak/points`, start the
 official driver in a separate terminal:

@@ -71,6 +71,8 @@ class Snap:
     front_fused: float
     front_lidar: float
     front_depth: float
+    front_depth_image: float
+    front_depth_low: float
     front_oak_low: float
     front_oak_low_count: int
     front_oak_sample_count: int
@@ -84,6 +86,8 @@ class Snap:
     tof_emergency: bool
     lidar_ok: bool
     depth_ok: bool
+    depth_image_ok: bool
+    pointcloud_ok: bool
 
 
 class ObstacleAvoidanceNode(Node):
@@ -1120,6 +1124,8 @@ class ObstacleAvoidanceNode(Node):
         source = list(fused.get('source', []))
         lidar_ok = bool(lidar.get('available', False))
         depth_ok = bool(depth.get('available', False))
+        depth_image_ok = bool(depth.get('image_available', False))
+        pointcloud_ok = bool(depth.get('pointcloud_available', False))
         emergency = bool(fused.get('emergency', False))
         tof_emergency = bool(emergency and 'tof' in source)
 
@@ -1129,6 +1135,8 @@ class ObstacleAvoidanceNode(Node):
             ),
             front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
             front_depth=_finite(depth.get('front_min')),
+            front_depth_image=_finite(depth.get('image_front_min')),
+            front_depth_low=_finite(depth.get('image_low_front_min')),
             front_oak_low=_finite(depth.get('pointcloud_low_front_min')),
             front_oak_low_count=int(depth.get('pointcloud_low_front_count', 0) or 0),
             front_oak_sample_count=int(depth.get('pointcloud_sample_count', 0) or 0),
@@ -1144,6 +1152,8 @@ class ObstacleAvoidanceNode(Node):
             tof_emergency=tof_emergency,
             lidar_ok=lidar_ok,
             depth_ok=depth_ok,
+            depth_image_ok=depth_image_ok,
+            pointcloud_ok=pointcloud_ok,
         )
 
     def _front_tof_distance(self, tof: dict) -> float:
@@ -1321,17 +1331,33 @@ class ObstacleAvoidanceNode(Node):
             and snap.front_oak_low <= self._clear
             and snap.front_oak_low_count > 0
         )
+        depth_low_hit = (
+            math.isfinite(snap.front_depth_low)
+            and snap.front_depth_low <= self._clear
+        )
         lidar_front_hit = (
             math.isfinite(snap.front_lidar)
             and snap.front_lidar <= self._clear
         )
         oak_low_status = 'LOW_OBSTACLE' if oak_low_hit else 'clear'
-        lidar_miss = 'yes' if oak_low_hit and not lidar_front_hit else 'no'
+        if not snap.depth_image_ok:
+            depth_low_status = 'no_depth'
+        elif depth_low_hit:
+            depth_low_status = 'LOW_OBSTACLE'
+        elif math.isfinite(snap.front_depth_low):
+            depth_low_status = 'clear'
+        else:
+            depth_low_status = 'no_low_data'
+        low_lidar_miss = (oak_low_hit or depth_low_hit) and not lidar_front_hit
+        lidar_miss = 'yes' if low_lidar_miss else 'no'
         line = (
             f'[NAV] state={self._state} reason={reason}{creep_info} | '
             f'obstacle={"YES" if obstacle else "NO"} '
             f'front={_cm(front)} left={_cm(snap.left)} '
             f'right={_cm(snap.right)} rear={_cm(snap.rear)} | '
+            f'depth_img={"ok" if snap.depth_image_ok else "no"} '
+            f'img_front={_cm(snap.front_depth_image)} '
+            f'low={depth_low_status} low_dist={_cm(snap.front_depth_low)} | '
             f'oak_low={oak_low_status} dist={_cm(snap.front_oak_low)} '
             f'pts={snap.front_oak_low_count} pc={snap.front_oak_sample_count} '
             f'fallback={snap.front_oak_fallback_count} lidar_miss={lidar_miss} | '

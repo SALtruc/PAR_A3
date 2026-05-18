@@ -3,11 +3,10 @@
 #
 # Full fusion for the ROSbot 3 PRO means:
 #   - S2 LIDAR: /scan_filtered
-#   - OAK-D depth stream as PointCloud2: /oak/points
+#   - OAK-D depth image and/or PointCloud2
 #   - VL53L0X ToF: /range/fl,/range/fr,/range/rl,/range/rr
-# By default this runner auto-enables OAK pointcloud only when a PointCloud2
-# topic is visible. Set USE_POINTCLOUD=true and POINTCLOUD_TOPIC=/actual/topic
-# when you need to force a specific full-fusion configuration.
+# By default this runner auto-enables OAK depth/pointcloud only when the topic
+# is visible and publishing messages.
 
 set -euo pipefail
 
@@ -94,7 +93,9 @@ if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1"
   echo "[ok] ROS discovery is restricted to localhost"
 fi
 
+DEPTH_TOPIC_ARG="${DEPTH_TOPIC:-/oak/stereo/image_raw}"
 POINTCLOUD_TOPIC_ARG="${POINTCLOUD_TOPIC:-/oak/points}"
+USE_DEPTH_ARG="${USE_DEPTH:-auto}"
 USE_POINTCLOUD_ARG="${USE_POINTCLOUD:-auto}"
 
 list_topics_with_types() {
@@ -112,6 +113,34 @@ topic_is_pointcloud() {
     $1 == topic && index($0, "[sensor_msgs/msg/PointCloud2]") { found = 1 }
     END { exit found ? 0 : 1 }
   '
+}
+
+topic_is_depth_image() {
+  local topic="$1"
+  local topics_with_types="$2"
+  printf '%s\n' "$topics_with_types" | awk -v topic="$topic" '
+    $1 == topic && index($0, "[sensor_msgs/msg/Image]") { found = 1 }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+first_depth_topic() {
+  local topics_with_types="$1"
+  printf '%s\n' "$topics_with_types" \
+    | awk 'index($0, "[sensor_msgs/msg/Image]") { print $1 }' \
+    | grep -Eiv 'rgb|color|compressed|theora|raw/compressed' \
+    | grep -Ei 'oak|camera|depth|stereo' \
+    | head -n 1
+}
+
+depth_has_sample() {
+  local topic="$1"
+  timeout 3 ros2 topic echo --once --qos-profile sensor_data \
+    "$topic" >/dev/null 2>&1 \
+    || timeout 3 ros2 topic echo --once --qos-reliability best_effort \
+    "$topic" sensor_msgs/msg/Image >/dev/null 2>&1 \
+    || timeout 3 ros2 topic echo --once --qos-reliability reliable \
+    "$topic" sensor_msgs/msg/Image >/dev/null 2>&1
 }
 
 first_pointcloud_topic() {
@@ -133,6 +162,70 @@ pointcloud_has_sample() {
 }
 
 topics_with_types=''
+case "${USE_DEPTH_ARG,,}" in
+  auto)
+    for attempt in 1 2 3; do
+      topics_with_types="$(list_topics_with_types)"
+      [ -n "$topics_with_types" ] && break
+      echo "[wait] ROS graph not visible for depth preflight, retry ${attempt}/3..."
+      sleep 1
+    done
+    if [ -z "$topics_with_types" ]; then
+      echo "[warn] Could not inspect ROS graph for depth topics; leaving OAK depth enabled."
+      USE_DEPTH_ARG=true
+    elif topic_is_depth_image "$DEPTH_TOPIC_ARG" "$topics_with_types" && depth_has_sample "$DEPTH_TOPIC_ARG"; then
+      USE_DEPTH_ARG=true
+      echo "[ok] depth image topic publishing data: $DEPTH_TOPIC_ARG"
+    else
+      candidate="$(first_depth_topic "$topics_with_types" || true)"
+      if [ -n "$candidate" ] && depth_has_sample "$candidate"; then
+        echo "[warn] $DEPTH_TOPIC_ARG is not active; using active depth image topic $candidate"
+        DEPTH_TOPIC_ARG="$candidate"
+        USE_DEPTH_ARG=true
+      else
+        echo "[warn] No active OAK depth Image data is visible; disabling OAK depth image."
+        USE_DEPTH_ARG=false
+      fi
+    fi
+    ;;
+  1|true|yes|on)
+    USE_DEPTH_ARG=true
+    for attempt in 1 2 3 4 5; do
+      topics_with_types="$(list_topics_with_types)"
+      if [ -z "$topics_with_types" ] || topic_is_depth_image "$DEPTH_TOPIC_ARG" "$topics_with_types"; then
+        break
+      fi
+      echo "[wait] Requested depth topic not visible yet: $DEPTH_TOPIC_ARG (${attempt}/5)"
+      sleep 1
+    done
+    if [ -n "$topics_with_types" ] && ! topic_is_depth_image "$DEPTH_TOPIC_ARG" "$topics_with_types"; then
+      candidate="$(first_depth_topic "$topics_with_types" || true)"
+      if [ -z "${DEPTH_TOPIC+x}" ] && [ -n "$candidate" ] && depth_has_sample "$candidate"; then
+        echo "[warn] $DEPTH_TOPIC_ARG is not visible; using active depth image topic $candidate"
+        DEPTH_TOPIC_ARG="$candidate"
+      else
+        echo "[warn] Requested depth topic is not visible: $DEPTH_TOPIC_ARG"
+        echo "[info] Visible depth-like Image topics:"
+        printf '%s\n' "$topics_with_types" \
+          | awk 'index($0, "[sensor_msgs/msg/Image]") { print $0 }' \
+          | grep -Eiv 'rgb|color|compressed|theora|raw/compressed' \
+          | grep -Ei 'oak|camera|depth|stereo' \
+          | sed 's/^/       /' || true
+      fi
+    elif [ -n "$topics_with_types" ] && ! depth_has_sample "$DEPTH_TOPIC_ARG"; then
+      echo "[warn] $DEPTH_TOPIC_ARG exists but no depth Image samples arrived."
+      echo "[warn] Project C will start, but OAK depth image will be unavailable until data flows."
+    fi
+    ;;
+  0|false|no|off)
+    USE_DEPTH_ARG=false
+    ;;
+  *)
+    echo "[warn] Unknown USE_DEPTH=$USE_DEPTH_ARG; disabling OAK depth image."
+    USE_DEPTH_ARG=false
+    ;;
+esac
+
 case "${USE_POINTCLOUD_ARG,,}" in
   auto)
     for attempt in 1 2 3; do
@@ -201,11 +294,13 @@ case "${USE_POINTCLOUD_ARG,,}" in
 esac
 
 echo "[ok] POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC_ARG"
+echo "[ok] DEPTH_TOPIC=$DEPTH_TOPIC_ARG"
+echo "[ok] USE_DEPTH=$USE_DEPTH_ARG"
 echo "[ok] USE_POINTCLOUD=$USE_POINTCLOUD_ARG"
 
 exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
-  depth_topic:="${DEPTH_TOPIC:-/oak/stereo/image_raw}" \
+  depth_topic:="${DEPTH_TOPIC_ARG}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC_ARG}" \
   pointcloud_qos:="${POINTCLOUD_QOS:-auto}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
@@ -215,7 +310,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   cmd_vel_topic:="${CMD_VEL_TOPIC:-/cmd_vel}" \
   odom_topic:="${ODOM_TOPIC:-/rosbot_base_controller/odom}" \
   imu_topic:="${IMU_TOPIC:-/imu_broadcaster/imu}" \
-  use_depth:="${USE_DEPTH:-false}" \
+  use_depth:="${USE_DEPTH_ARG}" \
   use_pointcloud:="${USE_POINTCLOUD_ARG}" \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \

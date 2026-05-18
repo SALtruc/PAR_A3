@@ -78,6 +78,17 @@ class ObstacleTrialLoggerNode(Node):
                 'emergency',
                 'dead_end',
                 'source',
+                'depth_available',
+                'depth_image_available',
+                'depth_image_front_min',
+                'depth_image_low_front_min',
+                'depth_motion',
+                'depth_motion_score',
+                'pointcloud_available',
+                'pointcloud_front_min',
+                'pointcloud_low_front_min',
+                'pointcloud_low_front_count',
+                'pointcloud_sample_count',
                 'path_length_m',
                 'coverage_area_m2',
                 'collision_count',
@@ -92,6 +103,7 @@ class ObstacleTrialLoggerNode(Node):
 
         self._state = 'UNKNOWN'
         self._latest_fused = {}
+        self._latest_depth = {}
         self._latest_source = []
         self._trial_start_time = time.time()
         self._collision_count = 0
@@ -124,7 +136,9 @@ class ObstacleTrialLoggerNode(Node):
             return
 
         fused = data.get('fused', {})
+        depth = data.get('depth', {})
         self._latest_fused = fused
+        self._latest_depth = depth
         self._latest_source = list(fused.get('source', []))
 
         dynamic = bool(fused.get('dynamic_obstacle', False))
@@ -229,6 +243,7 @@ class ObstacleTrialLoggerNode(Node):
 
     def _write_row(self, event: str, value: str = '', dynamic_latency=None):
         fused = self._latest_fused
+        depth = self._latest_depth
         summary = self._summary()
         dead_end_count = self._dead_end_count
         recovery_rate = (
@@ -249,6 +264,27 @@ class ObstacleTrialLoggerNode(Node):
             'emergency': bool(fused.get('emergency', False)),
             'dead_end': bool(fused.get('dead_end', False)),
             'source': '+'.join(self._latest_source),
+            'depth_available': bool(depth.get('available', False)),
+            'depth_image_available': bool(depth.get('image_available', False)),
+            'depth_image_front_min': _finite_or_none(depth.get('image_front_min')),
+            'depth_image_low_front_min': _finite_or_none(
+                depth.get('image_low_front_min')
+            ),
+            'depth_motion': bool(depth.get('motion', False)),
+            'depth_motion_score': _finite_or_none(depth.get('motion_score')),
+            'pointcloud_available': bool(depth.get('pointcloud_available', False)),
+            'pointcloud_front_min': _finite_or_none(
+                depth.get('pointcloud_front_min')
+            ),
+            'pointcloud_low_front_min': _finite_or_none(
+                depth.get('pointcloud_low_front_min')
+            ),
+            'pointcloud_low_front_count': int(
+                depth.get('pointcloud_low_front_count', 0) or 0
+            ),
+            'pointcloud_sample_count': int(
+                depth.get('pointcloud_sample_count', 0) or 0
+            ),
             'path_length_m': f'{self._path_length:.3f}',
             'coverage_area_m2': f'{self._coverage_area():.3f}',
             'collision_count': self._collision_count,

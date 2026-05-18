@@ -1175,6 +1175,13 @@ class ObstaclePerceptionNode(Node):
                 'left_min': _json_float(depth_left),
                 'right_min': _json_float(depth_right),
                 'image_front_min': _json_float(depth_image_front),
+                'image_low_front_min': _json_float(depth_low_front),
+                'image_low_roi': {
+                    'enabled': bool(self._depth_low_enabled),
+                    'y_center': _json_float(self._depth_low_y_center),
+                    'width_fraction': _json_float(self._depth_low_width_fraction),
+                    'height_fraction': _json_float(self._depth_low_height_fraction),
+                },
                 'pointcloud_front_min': _json_float(pointcloud_front),
                 'pointcloud_low_front_min': _json_float(pointcloud_low_front),
                 'pointcloud_low_front_count': int(pointcloud_low_front_count),
