@@ -94,7 +94,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
   depth_topic:="${DEPTH_TOPIC:-/oak/stereo/image_raw}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC:-/oak/points}" \
-  pointcloud_qos:="${POINTCLOUD_QOS:-reliable}" \
+  pointcloud_qos:="${POINTCLOUD_QOS:-reliable_transient_local}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
   tof_msg_type:="${TOF_MSG_TYPE:-scan}" \
   front_tof_topics:="${FRONT_TOF_TOPICS:-/range/fl,/range/fr}" \
