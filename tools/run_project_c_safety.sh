@@ -87,8 +87,11 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   scan_topic:="${SCAN_TOPIC:-/scan_filtered}" \
   depth_topic:="${DEPTH_TOPIC:-/camera/depth/image_rect_raw}" \
   pointcloud_topic:="${POINTCLOUD_TOPIC:-/oak/points}" \
+  pointcloud_qos:="${POINTCLOUD_QOS:-sensor_data}" \
   tof_topics:="${TOF_TOPICS:-/range/fl,/range/fr,/range/rl,/range/rr}" \
+  tof_msg_type:="${TOF_MSG_TYPE:-scan}" \
   front_tof_topics:="${FRONT_TOF_TOPICS:-/range/fl,/range/fr}" \
+  rear_tof_topics:="${REAR_TOF_TOPICS:-/range/rl,/range/rr}" \
   cmd_vel_topic:="${CMD_VEL_TOPIC:-/cmd_vel}" \
   odom_topic:="${ODOM_TOPIC:-/rosbot_base_controller/odom}" \
   imu_topic:="${IMU_TOPIC:-/imu_broadcaster/imu}" \
@@ -97,8 +100,8 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
   local_only:="${PROJECT_C_LOCAL_ONLY}" \
-  max_speed:="${MAX_SPEED:-0.22}" \
-  backup_speed:="${BACKUP_SPEED:-0.06}" \
-  backup_sec:="${BACKUP_SEC:-1.60}" \
+  max_speed:="${MAX_SPEED:-0.24}" \
+  backup_speed:="${BACKUP_SPEED:-0.08}" \
+  backup_sec:="${BACKUP_SEC:-0.70}" \
   require_battery_ok:="${REQUIRE_BATTERY_OK:-false}" \
   "$@"

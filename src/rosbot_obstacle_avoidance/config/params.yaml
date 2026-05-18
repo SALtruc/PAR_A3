@@ -8,6 +8,9 @@ obstacle_perception:
     pointcloud_topic: /oak/points
     tof_topic: /range
     tof_topics: /range/fl,/range/fr,/range/rl,/range/rr
+    tof_msg_type: scan
+    front_tof_topics: /range/fl,/range/fr
+    rear_tof_topics: /range/rl,/range/rr
     obstacle_topic: /obstacle_representation
 
     use_lidar: true
@@ -17,15 +20,15 @@ obstacle_perception:
     publish_hz: 20.0
 
     # LIDAR safety/perception thresholds
-    emergency_distance: 0.14
-    obstacle_distance: 0.22
+    emergency_distance: 0.10
+    obstacle_distance: 0.35
     clear_distance: 0.35
     front_center_angle_deg: 0.0
     front_angle_deg: 28.0
     front_percentile: 5.0
     robot_half_width_m: 0.13
     front_path_half_width_m: 0.14
-    side_guard_forward_m: 0.28
+    side_guard_forward_m: 0.35
     side_guard_rear_m: 0.20
     side_percentile: 10.0
     front_close_min_rays: 3
@@ -35,12 +38,13 @@ obstacle_perception:
     sensor_stale_sec: 1.0
 
     # OAK depth: secondary confirmation + dynamic object support
-    depth_obstacle_distance: 0.45
-    depth_center_fraction: 0.36
+    depth_obstacle_distance: 0.35
+    depth_center_fraction: 0.33
     depth_side_fraction: 0.30
-    depth_height_fraction: 0.42
+    depth_height_fraction: 0.40
+    depth_percentile: 50.0
 
-    # Pointcloud kept off for stability. Turn on only for ablation/demo if needed.
+    # OAK point cloud supports low/side obstacles and the full-fusion trial.
     pointcloud_frame: optical
     pointcloud_target_frame: base_link
     pointcloud_use_tf: true
@@ -63,9 +67,9 @@ obstacle_perception:
     pointcloud_unorganized_max_points: 8000
 
     # Dynamic motion from depth image lower-centre ROI, useful for legs/feet.
-    dynamic_obstacle_distance: 0.80
+    dynamic_obstacle_distance: 1.00
     dynamic_closing_speed: 0.80
-    dynamic_confirm_sec: 0.20
+    dynamic_confirm_sec: 0.10
     front_filter_alpha: 0.35
     obstacle_hold_sec: 0.30
     clear_confirm_sec: 0.20
@@ -99,45 +103,45 @@ obstacle_avoidance:
     control_hz: 20.0
 
     # Default movement
-    max_speed: 0.22
+    max_speed: 0.24
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
     dodge_forward_speed: 0.045
-    dodge_angular_speed: 0.55
+    dodge_angular_speed: 0.45
     dodge_step_deg: 60.0
     dodge_pivot_sec: 0.60
 
     # Strong recovery only after too-close/dead-end
-    rotation_angular_speed: 0.60
-    rotation_step_deg: 95.0
+    rotation_angular_speed: 0.50
+    rotation_step_deg: 70.0
     rotation_commit_sec: 0.65
     max_rotation_attempts: 3
     backup_speed: 0.08
-    backup_sec: 1.60
+    backup_sec: 0.70
 
     # Main thresholds
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
     stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
-    front_tof_obstacle_distance: 0.12
+    front_tof_obstacle_distance: 0.30
     front_tof_hard_distance: 0.12
-    dodge_clearance: 0.12      # min side clearance for dead-end/corner recovery
+    dodge_clearance: 0.03      # min side clearance for dead-end recovery
     rear_stop_distance: 0.20
-    side_guard_distance: 0.08
-    side_escape_distance: 0.12
-    side_escape_angular_speed: 0.32
+    side_guard_distance: 0.03
+    side_escape_distance: 0.03
+    side_escape_angular_speed: 0.30
     side_escape_sec: 0.45
     edge_escape_enabled: true
-    edge_escape_front_distance: 0.25
-    edge_escape_clearance: 0.20
+    edge_escape_front_distance: 0.15
+    edge_escape_clearance: 0.30
     edge_escape_angular_speed: 0.45
-    edge_escape_sec: 1.00
+    edge_escape_sec: 0.80
     edge_escape_max_attempts: 3
-    corner_backup_side_distance: 0.05
+    corner_backup_side_distance: 0.00
     corner_backup_front_distance: 0.35
-    corner_backup_both_sides_distance: 0.10
-    dynamic_observe_distance: 0.80
+    corner_backup_both_sides_distance: 0.00
+    dynamic_observe_distance: 1.00
     observe_frames: 8          # frames to confirm obstacle before classify static/dynamic
     clear_observe_frames: 3
     front_release_distance: 0.45
@@ -149,7 +153,7 @@ obstacle_avoidance:
     creep_speed: 0.040         # m/s approach speed after static confirmed (to reach stop_distance then dodge)
     dynamic_timeout_sec: 5.0   # seconds to wait for dynamic object to clear before treating as static
     dynamic_close_distance: 0.20  # sudden dynamic appearance threshold (within 20 cm)
-    surprise_backup_enabled: true
+    surprise_backup_enabled: false
     surprise_backup_distance: 0.20
     surprise_backup_sec: 0.45
     surprise_backup_cooldown_sec: 1.20
@@ -164,7 +168,7 @@ obstacle_avoidance:
     contact_cmd_speed_min: 0.025
     contact_odom_speed_max: 0.012
     contact_odom_angular_max: 0.08
-    contact_stall_sec: 1.50
+    contact_stall_sec: 5.00
     contact_recovery_cooldown_sec: 1.8
     contact_odom_stale_sec: 0.5
 

@@ -68,6 +68,7 @@ def _angle_delta(value: float, reference: float) -> float:
 
 @dataclass
 class Snap:
+    front_fused: float
     front_lidar: float
     front_depth: float
     front_oak_low: float
@@ -103,45 +104,45 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.22)
+        self.declare_parameter('max_speed', 0.24)
         self.declare_parameter('observe_speed', 0.0)
         self.declare_parameter('dodge_forward_speed', 0.045)
-        self.declare_parameter('dodge_angular_speed', 0.55)
-        self.declare_parameter('rotation_angular_speed', 0.60)
+        self.declare_parameter('dodge_angular_speed', 0.45)
+        self.declare_parameter('rotation_angular_speed', 0.50)
         self.declare_parameter('backup_speed', 0.08)
 
         # Distances, metres
-        self.declare_parameter('clear_distance', 0.45)
+        self.declare_parameter('clear_distance', 0.35)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
-        self.declare_parameter('front_tof_obstacle_distance', 0.12)
+        self.declare_parameter('front_tof_obstacle_distance', 0.30)
         self.declare_parameter('front_tof_hard_distance', 0.12)
-        self.declare_parameter('dodge_clearance', 0.12)
+        self.declare_parameter('dodge_clearance', 0.03)
         self.declare_parameter('rear_stop_distance', 0.20)
-        self.declare_parameter('side_guard_distance', 0.08)
-        self.declare_parameter('side_escape_distance', 0.12)
-        self.declare_parameter('side_escape_angular_speed', 0.32)
+        self.declare_parameter('side_guard_distance', 0.03)
+        self.declare_parameter('side_escape_distance', 0.03)
+        self.declare_parameter('side_escape_angular_speed', 0.30)
         self.declare_parameter('side_escape_sec', 0.45)
         self.declare_parameter('edge_escape_enabled', True)
-        self.declare_parameter('edge_escape_front_distance', 0.25)
+        self.declare_parameter('edge_escape_front_distance', 0.15)
         self.declare_parameter('edge_escape_clearance', 0.30)
         self.declare_parameter('edge_escape_angular_speed', 0.45)
-        self.declare_parameter('edge_escape_sec', 1.00)
+        self.declare_parameter('edge_escape_sec', 0.80)
         self.declare_parameter('edge_escape_max_attempts', 3)
-        self.declare_parameter('corner_backup_side_distance', 0.05)
+        self.declare_parameter('corner_backup_side_distance', 0.00)
         self.declare_parameter('corner_backup_front_distance', 0.35)
-        self.declare_parameter('corner_backup_both_sides_distance', 0.10)
-        self.declare_parameter('dynamic_observe_distance', 0.80)
+        self.declare_parameter('corner_backup_both_sides_distance', 0.00)
+        self.declare_parameter('dynamic_observe_distance', 1.00)
 
         # Timings / behaviour limits
         self.declare_parameter('observe_frames', 8)
         self.declare_parameter('clear_observe_frames', 3)
         self.declare_parameter('front_release_distance', 0.45)
         self.declare_parameter('front_clear_exit_frames', 5)
-        self.declare_parameter('backup_sec', 1.60)
+        self.declare_parameter('backup_sec', 0.70)
         self.declare_parameter('dodge_step_deg', 60.0)
         self.declare_parameter('dodge_pivot_sec', 0.60)
-        self.declare_parameter('rotation_step_deg', 95.0)
+        self.declare_parameter('rotation_step_deg', 70.0)
         self.declare_parameter('rotation_commit_sec', 0.65)
         self.declare_parameter('max_rotation_attempts', 3)
         self.declare_parameter('clearer_side_deadband', 0.05)
@@ -151,7 +152,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('creep_speed', 0.040)
         self.declare_parameter('dynamic_timeout_sec', 5.0)
         self.declare_parameter('dynamic_close_distance', 0.20)
-        self.declare_parameter('surprise_backup_enabled', True)
+        self.declare_parameter('surprise_backup_enabled', False)
         self.declare_parameter('surprise_backup_distance', 0.20)
         self.declare_parameter('surprise_backup_sec', 0.45)
         self.declare_parameter('surprise_backup_cooldown_sec', 1.20)
@@ -165,7 +166,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('contact_cmd_speed_min', 0.025)
         self.declare_parameter('contact_odom_speed_max', 0.012)
         self.declare_parameter('contact_odom_angular_max', 0.08)
-        self.declare_parameter('contact_stall_sec', 1.50)
+        self.declare_parameter('contact_stall_sec', 5.00)
         self.declare_parameter('contact_recovery_cooldown_sec', 1.8)
         self.declare_parameter('contact_odom_stale_sec', 0.5)
         self.declare_parameter('tilt_recovery_enabled', True)
@@ -918,37 +919,17 @@ class ObstacleAvoidanceNode(Node):
     # ---------------------------------------------------------------------
 
     def _effective_front(self, snap: Snap) -> float:
-        """Return the front distance used by the FSM.
-
-        Important fix:
-        If LIDAR reports a medium-close value but OAK depth clearly sees an open
-        path, do NOT keep returning the LIDAR value forever. That caused the
-        OBSERVE -> DRIVE -> OBSERVE loop.
-        """
-        lidar = snap.front_lidar
-        depth = snap.front_depth
-        tof = snap.front_tof
-
-        if math.isfinite(tof) and tof <= self._front_tof_hard:
-            return min(lidar, depth, tof)
-
-        if snap.depth_ok and math.isfinite(depth):
-            # Real close depth obstacle: trust depth.
-            if depth <= self._stop:
-                return depth
-
-            # LIDAR says medium-close, but depth sees clear path: treat as clear.
-            if depth >= self._clear and (not math.isfinite(lidar) or lidar > self._stop):
-                return depth
-
-            # Both sensors show something in the front area.
-            if math.isfinite(lidar):
-                return min(lidar, depth)
-            return depth
-
-        return lidar if math.isfinite(lidar) else math.inf
+        """Return the conservative fused front distance used by the FSM."""
+        if math.isfinite(snap.front_fused):
+            return snap.front_fused
+        candidates = [snap.front_lidar, snap.front_depth]
+        if math.isfinite(snap.front_tof) and snap.front_tof <= self._front_tof_obstacle:
+            candidates.append(snap.front_tof)
+        finite = [value for value in candidates if math.isfinite(value)]
+        return min(finite) if finite else math.inf
 
     def _front_suspicious(self, snap: Snap, front: float) -> bool:
+        fused_suspicious = math.isfinite(front) and front <= self._clear
         lidar_suspicious = (
             snap.lidar_ok
             and math.isfinite(snap.front_lidar)
@@ -964,13 +945,23 @@ class ObstacleAvoidanceNode(Node):
             and math.isfinite(front)
             and front <= self._dynamic_observe
         )
-        return lidar_suspicious or depth_suspicious or dynamic_suspicious
+        return (
+            fused_suspicious
+            or lidar_suspicious
+            or depth_suspicious
+            or dynamic_suspicious
+        )
 
     def _depth_confirms_clear(self, snap: Snap) -> bool:
         return (
             snap.depth_ok
             and math.isfinite(snap.front_depth)
             and snap.front_depth >= self._clear
+            and (
+                not snap.lidar_ok
+                or not math.isfinite(snap.front_lidar)
+                or snap.front_lidar >= self._clear
+            )
             and not snap.dynamic
         )
 
@@ -1077,6 +1068,9 @@ class ObstacleAvoidanceNode(Node):
         tof_emergency = bool(emergency and 'tof' in source)
 
         return Snap(
+            front_fused=_finite(
+                fused.get('effective_front_distance', fused.get('front_distance'))
+            ),
             front_lidar=_finite(lidar.get('front_control', fused.get('front_distance'))),
             front_depth=_finite(depth.get('front_min')),
             front_oak_low=_finite(depth.get('pointcloud_low_front_min')),
