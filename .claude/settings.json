@@ -7,7 +7,11 @@
       "Bash(python -c \"import paramiko; print\\('paramiko ok'\\)\")",
       "Bash(python3 -c \"import paramiko; print\\('paramiko ok'\\)\")",
       "Bash(pip3 install *)",
-      "PowerShell($python = \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\"; & $python -c \"import paramiko; print\\('paramiko ok'\\)\" 2>&1)"
+      "PowerShell($python = \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\"; & $python -c \"import paramiko; print\\('paramiko ok'\\)\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Temp\\\\ssh_check.py\" 2>&1)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\PC\\AppData\\Local\\Temp"
     ]
   }
 }
