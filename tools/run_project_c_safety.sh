@@ -66,15 +66,13 @@ case "${PROJECT_C_LOCAL_ONLY,,}" in
     ;;
 esac
 
-# husarion-depthai snap uses FastRTPS with UDPv4 on 127.0.0.1 only and
-# useBuiltinTransports=false (no multicast, no SHM). CycloneDDS by default
-# skips loopback and uses multicast on physical interfaces, so it never
-# reaches depthai. Fix: force CycloneDDS onto loopback with multicast
-# disabled so discovery uses unicast peer-to-peer (matching FastRTPS config).
-# All other snaps also run on the same machine so loopback is sufficient.
+# husarion-depthai snap is configured with ros.transport=udp-lo-cyclone which
+# loads /var/snap/husarion-depthai/common/dds-config-udp-lo-cyclone.xml.
+# That profile uses CycloneDDS on lo, AllowMulticast=false, and a localhost
+# unicast peer. Mirror it exactly so both participants use identical settings.
 if [ -z "${CYCLONEDDS_URI:-}" ]; then
-  export CYCLONEDDS_URI='<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo"/></Interfaces></General><Discovery><Peers><Peer address="localhost"/></Peers><ParticipantIndex>auto</ParticipantIndex></Discovery></Domain></CycloneDDS>'
-  echo "[ok] CYCLONEDDS_URI=loopback+unicast-peer (matching depthai FastRTPS udp-lo profile)"
+  export CYCLONEDDS_URI='<CycloneDDS><Domain id="any"><General><NetworkInterfaceAddress>lo</NetworkInterfaceAddress><AllowMulticast>false</AllowMulticast></General><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>30</MaxAutoParticipantIndex><Peers><Peer address="localhost"/></Peers></Discovery></Domain></CycloneDDS>'
+  echo "[ok] CYCLONEDDS_URI=loopback/no-multicast/localhost-peer (matching depthai udp-lo-cyclone)"
 else
   echo "[ok] CYCLONEDDS_URI (user-defined): ${CYCLONEDDS_URI}"
 fi
