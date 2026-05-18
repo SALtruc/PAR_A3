@@ -152,6 +152,13 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_motion_min_ratio', 0.015)
         self.declare_parameter('depth_motion_confirm_frames', 2)
 
+        # Low-region static depth check: catches close obstacles that appear
+        # below the centre ROI (y > 0.5 in image = physically lower in scene).
+        self.declare_parameter('depth_low_enabled', True)
+        self.declare_parameter('depth_low_y_center', 0.78)
+        self.declare_parameter('depth_low_width_fraction', 0.36)
+        self.declare_parameter('depth_low_height_fraction', 0.18)
+
         scan_topic = self.get_parameter('scan_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         pointcloud_topic = self.get_parameter('pointcloud_topic').value
@@ -341,12 +348,25 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_confirm_frames = max(
             1, int(self.get_parameter('depth_motion_confirm_frames').value)
         )
+        self._depth_low_enabled = _as_bool(
+            self.get_parameter('depth_low_enabled').value
+        )
+        self._depth_low_y_center = float(
+            self.get_parameter('depth_low_y_center').value
+        )
+        self._depth_low_width_fraction = float(
+            self.get_parameter('depth_low_width_fraction').value
+        )
+        self._depth_low_height_fraction = float(
+            self.get_parameter('depth_low_height_fraction').value
+        )
 
         self._latest_scan: LaserScan | None = None
         self._last_scan_time: float | None = None
         self._depth_front = math.inf
         self._depth_left = math.inf
         self._depth_right = math.inf
+        self._depth_low_front = math.inf
         self._last_depth_time: float | None = None
         self._prev_depth_motion_roi = None
         self._depth_motion = False
@@ -510,6 +530,17 @@ class ObstaclePerceptionNode(Node):
             x_center=0.75,
             width_fraction=self._depth_side_fraction,
         )
+        if self._depth_low_enabled:
+            self._depth_low_front = self._depth_roi_distance(
+                depth_img,
+                msg.encoding,
+                x_center=0.50,
+                width_fraction=self._depth_low_width_fraction,
+                y_center=self._depth_low_y_center,
+                height_fraction=self._depth_low_height_fraction,
+            )
+        else:
+            self._depth_low_front = math.inf
         self._update_depth_motion(depth_img, msg.encoding)
 
     def _on_pointcloud(self, msg: PointCloud2):
@@ -816,12 +847,15 @@ class ObstaclePerceptionNode(Node):
             depth_img,
             encoding: str,
             x_center: float,
-            width_fraction: float) -> float:
+            width_fraction: float,
+            y_center: float = 0.5,
+            height_fraction: float | None = None) -> float:
         h, w = depth_img.shape[:2]
+        hf = height_fraction if height_fraction is not None else self._depth_height_fraction
         roi_w = max(1, int(w * width_fraction))
-        roi_h = max(1, int(h * self._depth_height_fraction))
+        roi_h = max(1, int(h * hf))
         cx = int(w * x_center)
-        cy = h // 2
+        cy = int(h * y_center)
         x0 = max(0, cx - roi_w // 2)
         x1 = min(w, cx + roi_w // 2)
         y0 = max(0, cy - roi_h // 2)
@@ -900,7 +934,8 @@ class ObstaclePerceptionNode(Node):
         )
         pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
         pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
-        depth_front = _min_finite(depth_image_front, pointcloud_front)
+        depth_low_front = self._depth_low_front if depth_image_recent else math.inf
+        depth_front = _min_finite(depth_image_front, pointcloud_front, depth_low_front)
         depth_motion_active = bool(depth_image_recent and self._depth_motion)
         if depth_motion_active:
             depth_front = _min_finite(depth_front, self._depth_motion_front)

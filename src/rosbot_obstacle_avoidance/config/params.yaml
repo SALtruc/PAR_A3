@@ -78,6 +78,13 @@ obstacle_perception:
     depth_motion_min_ratio: 0.015
     depth_motion_confirm_frames: 2
 
+    # Low-region static depth check for close obstacles (~25cm) that appear
+    # below the centre ROI. Only active when use_depth: true.
+    depth_low_enabled: true
+    depth_low_y_center: 0.78
+    depth_low_width_fraction: 0.36
+    depth_low_height_fraction: 0.18
+
 obstacle_avoidance:
   ros__parameters:
     obstacle_topic: /obstacle_representation
