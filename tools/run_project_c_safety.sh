@@ -66,15 +66,16 @@ case "${PROJECT_C_LOCAL_ONLY,,}" in
     ;;
 esac
 
-# husarion-depthai snap is configured with ros.transport=udp-lo-cyclone which
-# loads /var/snap/husarion-depthai/common/dds-config-udp-lo-cyclone.xml.
-# That profile uses CycloneDDS on lo, AllowMulticast=false, and a localhost
-# unicast peer. Mirror it exactly so both participants use identical settings.
-if [ -z "${CYCLONEDDS_URI:-}" ]; then
-  export CYCLONEDDS_URI='<CycloneDDS><Domain id="any"><General><NetworkInterfaceAddress>lo</NetworkInterfaceAddress><AllowMulticast>false</AllowMulticast></General><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>30</MaxAutoParticipantIndex><Peers><Peer address="localhost"/></Peers></Discovery></Domain></CycloneDDS>'
-  echo "[ok] CYCLONEDDS_URI=loopback/no-multicast/localhost-peer (matching depthai udp-lo-cyclone)"
-else
+# husarion-depthai snap uses rmw_fastrtps_cpp (ros.transport=udp — all interfaces).
+# Our nodes use rmw_cyclonedds_cpp. CycloneDDS and FastRTPS interoperate via the
+# standard RTPS protocol when both are on the same network interface; the firmware
+# topics (/range/*, /battery, etc.) already prove this works on this image.
+# Do NOT restrict CYCLONEDDS_URI to loopback-only: the depthai snap does not
+# bundle librmw_cyclonedds_cpp.so, so udp-lo-cyclone is not available.
+if [ -n "${CYCLONEDDS_URI:-}" ]; then
   echo "[ok] CYCLONEDDS_URI (user-defined): ${CYCLONEDDS_URI}"
+else
+  echo "[ok] CYCLONEDDS_URI unset — CycloneDDS default (all interfaces, multicast)"
 fi
 
 actual_prefix="$(ros2 pkg prefix rosbot_obstacle_avoidance 2>/dev/null || true)"
