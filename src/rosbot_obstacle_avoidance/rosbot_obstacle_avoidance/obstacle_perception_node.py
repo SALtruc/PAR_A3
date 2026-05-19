@@ -25,7 +25,6 @@ from rclpy.qos import (
     qos_profile_sensor_data,
 )
 from rclpy.time import Time
-from geometry_msgs.msg import Twist, TwistStamped
 from sensor_msgs.msg import Image, LaserScan, PointCloud2, Range
 from std_msgs.msg import String
 
@@ -155,17 +154,10 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_motion_y_center', 0.68)
         self.declare_parameter('depth_motion_width_fraction', 0.45)
         self.declare_parameter('depth_motion_height_fraction', 0.38)
-        self.declare_parameter('depth_motion_delta_m', 0.20)
-        self.declare_parameter('depth_motion_near_m', 0.90)
-        self.declare_parameter('depth_motion_min_ratio', 0.05)
-        self.declare_parameter('depth_motion_confirm_frames', 4)
-        # Suppress depth_motion when the robot itself is rotating or backing up.
-        # Any |angular.z| above this (rad/s) counts as "robot rotating".
-        self.declare_parameter('depth_motion_ego_suppress_ang', 0.10)
-        # Any linear.x below this (m/s, negative = backward) counts as backing.
-        self.declare_parameter('depth_motion_ego_suppress_lin', -0.005)
-        self.declare_parameter('cmd_vel_topic', '/cmd_vel')
-        self.declare_parameter('cmd_vel_stamped', True)
+        self.declare_parameter('depth_motion_delta_m', 0.10)
+        self.declare_parameter('depth_motion_near_m', 1.20)
+        self.declare_parameter('depth_motion_min_ratio', 0.015)
+        self.declare_parameter('depth_motion_confirm_frames', 2)
 
         # Low-region static depth check: catches close obstacles that appear
         # below the centre ROI (y > 0.5 in image = physically lower in scene).
@@ -397,14 +389,6 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_confirm_frames = max(
             1, int(self.get_parameter('depth_motion_confirm_frames').value)
         )
-        self._depth_motion_ego_suppress_ang = float(
-            self.get_parameter('depth_motion_ego_suppress_ang').value
-        )
-        self._depth_motion_ego_suppress_lin = float(
-            self.get_parameter('depth_motion_ego_suppress_lin').value
-        )
-        cmd_vel_topic = str(self.get_parameter('cmd_vel_topic').value)
-        self._cmd_vel_stamped = _as_bool(self.get_parameter('cmd_vel_stamped').value)
         self._depth_low_enabled = _as_bool(
             self.get_parameter('depth_low_enabled').value
         )
@@ -430,8 +414,6 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_score = 0.0
         self._depth_motion_front = math.inf
         self._depth_motion_count = 0
-        self._cmd_vel_lin_x: float = 0.0
-        self._cmd_vel_ang_z: float = 0.0
         self._pointcloud_front = math.inf
         self._pointcloud_low_front = math.inf
         self._pointcloud_low_front_count = 0
@@ -530,16 +512,6 @@ class ObstaclePerceptionNode(Node):
                         qos_profile_sensor_data,
                     )
                 )
-
-        cmd_vel_msg_type = TwistStamped if self._cmd_vel_stamped else Twist
-        self._subscriptions.append(
-            self.create_subscription(
-                cmd_vel_msg_type,
-                cmd_vel_topic,
-                self._on_cmd_vel,
-                10,
-            )
-        )
 
         self._pub = self.create_publisher(String, obstacle_topic, 10)
         self.create_timer(1.0 / max(publish_hz, 1.0), self._publish_representation)
@@ -946,30 +918,12 @@ class ObstaclePerceptionNode(Node):
         valid = arr[np.isfinite(arr) & (arr > 0.02)]
         return arr, valid
 
-    def _on_cmd_vel(self, msg):
-        twist = msg.twist if hasattr(msg, 'twist') else msg
-        self._cmd_vel_lin_x = float(twist.linear.x)
-        self._cmd_vel_ang_z = float(twist.angular.z)
-
     def _update_depth_motion(self, depth_img, encoding: str):
         if not self._depth_motion_enabled:
             self._depth_motion = False
             self._depth_motion_score = 0.0
             self._depth_motion_front = math.inf
             self._prev_depth_motion_roi = None
-            self._depth_motion_count = 0
-            return
-
-        # When the robot itself is rotating or backing up the depth camera
-        # sweeps across new scene content — every pixel looks "moved".  Reset
-        # the reference frame so we only compare frames from when the robot is
-        # stationary or moving slowly forward.
-        robot_rotating = abs(self._cmd_vel_ang_z) > self._depth_motion_ego_suppress_ang
-        robot_backing = self._cmd_vel_lin_x < self._depth_motion_ego_suppress_lin
-        if robot_rotating or robot_backing:
-            self._prev_depth_motion_roi = None
-            self._depth_motion = False
-            self._depth_motion_score = 0.0
             self._depth_motion_count = 0
             return
 
@@ -1143,17 +1097,16 @@ class ObstaclePerceptionNode(Node):
         pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
         pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
         depth_low_front = self._depth_low_front if depth_image_recent else math.inf
-
-        # Role-based fusion:
-        # - LIDAR is the primary navigation/control front distance.
-        # - ToF contributes only when it is inside the close safety range.
-        # - OAK depth image is kept as secondary evidence/fallback.
-        # - OAK pointcloud is used for low-object support, not normal front control.
+        # Role-based fusion: OAK depth image is support/confirmation.
+        # Do NOT let pointcloud_front or depth_motion pull the main front distance down.
+        # Pointcloud is kept for low-object support, and depth_motion is only a dynamic hint.
         depth_front = depth_image_front
         depth_motion_active = bool(depth_image_recent and self._depth_motion)
         depth_left = _min_finite(depth_image_left, pointcloud_left)
         depth_right = _min_finite(depth_image_right, pointcloud_right)
 
+        # Main control distance: LIDAR is primary; ToF only joins when close.
+        # OAK depth is a fallback if LIDAR/ToF do not provide usable front distance.
         front_distance = _min_finite(
             lidar_front_control,
             front_tof_fusion,
@@ -1187,8 +1140,8 @@ class ObstaclePerceptionNode(Node):
             lidar_front_control < self._obstacle_distance
             or front_close_cluster
         )
-        # OAK depth is support/confirmation during normal navigation.
-        # It only becomes a direct blocker when LIDAR is unavailable.
+        # OAK depth should not directly block normal LIDAR navigation.
+        # It only becomes a blocking source if LIDAR is unavailable/stale.
         blocked_depth = (
             not scan_recent
             and math.isfinite(depth_front)
@@ -1199,6 +1152,7 @@ class ObstaclePerceptionNode(Node):
             lidar_front_control < self._emergency_distance
             or front_emergency_cluster
         )
+        # Depth emergency is fallback-only; ToF remains the hard emergency layer.
         depth_emergency = (
             not scan_recent
             and math.isfinite(depth_front)
@@ -1415,15 +1369,6 @@ class ObstaclePerceptionNode(Node):
             if self._filtered_front_distance is None:
                 self._filtered_front_distance = front_distance
             else:
-                # If front_distance jumps by more than 30 cm in one tick it
-                # almost certainly means the robot just rotated to a new heading
-                # (or a large sensor artefact), not a genuine closing obstacle.
-                # Reset the filter and history so the next tick starts fresh.
-                if abs(front_distance - self._filtered_front_distance) > 0.30:
-                    self._filtered_front_distance = front_distance
-                    self._prev_front_sample = None
-                    self._dynamic_first_seen_time = None
-                    return False, 0.0
                 alpha = max(0.0, min(1.0, self._front_filter_alpha))
                 self._filtered_front_distance = (
                     alpha * front_distance

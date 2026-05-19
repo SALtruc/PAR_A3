@@ -622,16 +622,6 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
-        # Priority 0.5: dynamic obstacle within observe range → assess in OBSERVE
-        # before any mechanical maneuver (corner backup, edge escape, etc.).
-        # If already inside stop_distance, let static priorities handle it.
-        if snap.dynamic and math.isfinite(front) and self._stop < front <= self._dynamic_observe:
-            self._start_observe()
-            self._handle_observe(twist, snap, front)
-            self._log('observe_start', snap)
-            self._publish_cmd(twist)
-            return
-
         # Priority 1: corner pinch. A side scrape plus a close front object
         # should back out before pivoting, otherwise the robot can swing into
         # table legs / wall corners.
@@ -718,9 +708,7 @@ class ObstacleAvoidanceNode(Node):
         self._observe_count += 1
         now = time.monotonic()
 
-        # Corner backup only for static obstacles. For dynamic ones, let the
-        # dynamic wait block below decide — then dodge toward the clear side.
-        if not snap.dynamic and self._corner_backup_needed(snap, front):
+        if self._corner_backup_needed(snap, front):
             self._static_confirmed = False
             self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
@@ -780,29 +768,17 @@ class ObstacleAvoidanceNode(Node):
         # Phase 2: obstacle confirmed after observe_frames.
         self._static_confirmed = True
 
-        # Dynamic object handling: hold position briefly, then decide based on
-        # actual sensor readings — not the dynamic flag alone.
+        # Dynamic object handling: hold position and wait up to dynamic_timeout_sec.
+        # If the dynamic flag clears (person moved away), the top check exits first.
         if snap.dynamic and self._dynamic_first_seen is not None:
             elapsed = now - self._dynamic_first_seen
-
-            # Depth confirms the path is open → dynamic was a false positive.
-            if self._depth_confirms_clear(snap):
-                self._static_confirmed = False
-                self._set_state(DRIVE)
-                return False
-
             if front > self._stop and elapsed < self._dynamic_timeout:
+                # Dynamic object still near but not dangerously close: hold still.
                 self._log('dynamic_wait', snap)
                 twist.linear.x = 0.0
                 twist.angular.z = 0.0
                 return True
-
-            # Timeout: only dodge if LIDAR/depth still see a real obstacle.
-            if not self._front_suspicious_without_dynamic(snap, front):
-                self._static_confirmed = False
-                self._set_state(DRIVE)
-                return False
-            # Still suspicious → fall through to static handling below.
+            # Dynamic timed out (>5s) OR entered stop zone → treat as static blocker.
 
         # Static confirmed (or dynamic timed out/too close).
         # Dead-end check first.
@@ -811,33 +787,51 @@ class ObstacleAvoidanceNode(Node):
             self._start_corner_backup()
             return True
 
-        # Static confirmed or dynamic timed out.
-        # Controlled creep is only allowed for stable static obstacles.
         self._static_confirmed = False
 
-        # Hard safety zone: too close means back up instead of dodging forward.
-        if self._too_close(snap) or (math.isfinite(front) and front <= self._hard_backup):
-            self._start_backup()
+        # Hard safety zone: below stop distance, do not continue straight.
+        # Stop and start edge escape if possible; otherwise back up.
+        if math.isfinite(front) and front <= self._stop:
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            if self._edge_escape_enabled and self._edge_escape_needed(snap, front):
+                self._start_edge_escape(snap)
+                return self._handle_edge_escape(twist, snap, now)
+            self._start_backup(duration=0.45, then_observe=True)
             return self._handle_backup(twist, snap, now)
 
+        # Low objects / feet should not be approached by creep.
+        if self._low_obstacle_hit(snap):
+            self._start_backup(duration=0.45, then_observe=True)
+            return self._handle_backup(twist, snap, now)
+
+        # Controlled straight-only creep: only for static, centered objects.
+        # Dynamic objects should wait briefly, then dodge/escape instead of creeping into them.
+        side_min = min(
+            snap.left if math.isfinite(snap.left) else math.inf,
+            snap.right if math.isfinite(snap.right) else math.inf,
+        )
         can_creep = (
             not snap.dynamic
-            and not self._low_obstacle_hit(snap)
             and math.isfinite(front)
-            and self._stop + 0.08 < front <= self._clear
-            and (not math.isfinite(snap.left) or snap.left > self._side_guard)
-            and (not math.isfinite(snap.right) or snap.right > self._side_guard)
-            and self._observe_count < self._observe_frames + 10
+            and self._stop < front <= min(self._clear, 0.40)
+            and side_min > self._side_guard
+            and self._observe_count <= self._observe_frames + 10
         )
         if can_creep:
             twist.linear.x = min(self._creep_speed, 0.015)
             twist.angular.z = 0.0
             return True
 
-        # Obstacle is still inside the observe/action zone: commit to dodge.
+        # Still in observe/action zone: commit to dodge. If space is tight,
+        # create a small amount of turning room first.
         if math.isfinite(front) and front <= self._clear:
-            if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
-                self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
+            needs_turning_room = (
+                front <= self._stop + 0.12
+                or (math.isfinite(side_min) and side_min <= 0.18)
+            )
+            if needs_turning_room and not snap.dynamic:
+                self._start_backup(duration=0.45, then_dodge=True)
                 return self._handle_backup(twist, snap, now)
             self._start_dodge(snap)
             return self._handle_dodge(twist, snap, front, now)
@@ -846,18 +840,6 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DRIVE)
         return False
 
-    def _front_suspicious_without_dynamic(self, snap: Snap, front: float) -> bool:
-        """True when LIDAR, depth, or low sensors — not the dynamic motion flag —
-        indicate a real obstacle within clear_distance. Used to decide whether a
-        dynamic timeout should trigger a dodge or just let the robot drive."""
-        if math.isfinite(front) and front <= self._clear:
-            return True
-        if snap.lidar_ok and math.isfinite(snap.front_lidar) and snap.front_lidar <= self._clear:
-            return True
-        if snap.depth_ok and math.isfinite(snap.front_depth) and snap.front_depth <= self._clear:
-            return True
-        return self._low_obstacle_hit(snap)
-
     def _start_dodge(self, snap: Snap):
         self._side_escape_count = 0
         self._turn_dir = self._clearer_side(snap.left, snap.right)
@@ -865,51 +847,26 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DODGE, self._dodge_sec)
 
     def _handle_dodge(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
-        if self._corner_backup_needed(snap, front):
-            self._start_corner_backup()
-            return self._handle_backup(twist, snap, now)
-
-        if self._surprise_backup_needed(snap, front, now):
-            self._start_backup(self._surprise_backup_sec, then_observe=True)
-            self._last_surprise_backup = now
-            return self._handle_backup(twist, snap, now)
-
-        if self._too_close(snap):
-            self._start_backup()
-            return self._handle_backup(twist, snap, now)
-
-        # Low object (below LIDAR plane) detected by OAK during the arc: abort
-        # and back up so the robot doesn't ride over it.
-        if self._low_obstacle_hit(snap):
-            self._start_backup()
-            return self._handle_backup(twist, snap, now)
-
-        if self._edge_escape_needed(snap, front):
-            self._start_edge_escape(snap)
-            return self._handle_edge_escape(twist, snap, now)
-
         elapsed = max(0.0, now - self._state_start)
+
+        # Only hard safety can interrupt DODGE.
+        if self._too_close(snap) or snap.tof_emergency:
+            self._start_backup()
+            return self._handle_backup(twist, snap, now)
+
+        # Commit pivot first.
         if elapsed < self._dodge_pivot_sec:
-            # Pure pivot: turn in place. Do NOT exit early — a partial rotation
-            # moves the obstacle out of the LIDAR front sector producing a
-            # false-clear reading that would cause the robot to drive straight
-            # into the obstacle.
             twist.linear.x = 0.0
             twist.angular.z = self._turn_dir * self._dodge_ang
             return True
 
+        # Commit arc.
         if now < self._state_end:
-            # Arc phase: forward + angular. Commit to the full arc.
-            # Do NOT exit early on a front-clear reading — the obstacle just
-            # rotated out of the scan sector; it is still physically there.
             twist.linear.x = self._dodge_forward
             twist.angular.z = self._turn_dir * self._dodge_ang
             return True
 
-        # Full arc completed. Re-enter OBSERVE to verify the new heading
-        # before resuming straight drive. If the obstacle is still detectable
-        # from the new heading, OBSERVE will initiate another dodge step —
-        # the robot keeps arcing until the obstacle is fully cleared.
+        # Verify new heading after the committed dodge.
         self._start_observe()
         twist.linear.x = 0.0
         twist.angular.z = 0.0
@@ -1083,23 +1040,17 @@ class ObstacleAvoidanceNode(Node):
     def _handle_rotate(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
         elapsed = max(0.0, now - self._state_start)
 
-        # Hard safety: abort rotation only when front is critically close AND
-        # the rear is clear enough to actually back up. If rear is also blocked,
-        # backup exits immediately and causes ROTATE→BACKUP→ROTATE — keep rotating.
-        rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
-        if self._too_close(snap) and not rear_blocked:
+        # Only hard safety can interrupt ROTATE immediately.
+        if self._too_close(snap) or snap.tof_emergency:
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 
-        # Commit to the full rotation arc before any soft checks run.
-        # This prevents corner_backup from cancelling rotation on the very
-        # first tick and causing a tight ROTATE→BACKUP→ROTATE loop.
+        # Commit rotation before soft corner/edge checks.
         if now < self._state_end and elapsed < self._rotate_commit_sec:
             twist.linear.x = 0.0
             twist.angular.z = self._turn_dir * self._rot_ang
             return True
 
-        # Soft checks only after the robot has actually rotated.
         if self._corner_backup_needed(snap, front):
             self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
@@ -1211,28 +1162,31 @@ class ObstacleAvoidanceNode(Node):
         )
 
     def _effective_front(self, snap: Snap) -> float:
-        """Main front distance used by the FSM.
+        """Return the front distance used by the FSM.
 
         Role-based fusion:
         - ToF close range is a safety override.
         - LIDAR is the primary navigation front.
-        - OAK depth is a fallback if LIDAR has no useful reading.
-        - OAK low regions support low-obstacle detection.
+        - OAK depth is fallback if LIDAR has no useful reading.
+        - OAK low/depth-low only supports low-object detection.
         """
         candidates = []
 
+        # ToF only joins the main front estimate when it is close enough to matter.
         if math.isfinite(snap.front_tof) and snap.front_tof <= self._front_tof_obstacle:
             candidates.append(snap.front_tof)
 
+        # LIDAR is the main front sensor.
         if snap.lidar_ok and math.isfinite(snap.front_lidar):
             candidates.append(snap.front_lidar)
 
+        # OAK depth is fallback only if LIDAR/ToF do not give a usable front distance.
         if not candidates and snap.depth_ok and math.isfinite(snap.front_depth):
             candidates.append(snap.front_depth)
 
+        # OAK low-object support.
         if self._valid_oak_low(snap) and snap.front_oak_low <= self._low_obstacle_distance:
             candidates.append(snap.front_oak_low)
-
         if self._valid_depth_low(snap) and snap.front_depth_low <= self._low_obstacle_distance:
             candidates.append(snap.front_depth_low)
 
@@ -1279,10 +1233,6 @@ class ObstacleAvoidanceNode(Node):
             and (
                 not math.isfinite(snap.front_tof)
                 or snap.front_tof >= self._clear
-            )
-            and (
-                not math.isfinite(snap.front_fused)
-                or snap.front_fused >= self._clear
             )
         )
 
