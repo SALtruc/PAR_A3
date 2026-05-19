@@ -798,10 +798,15 @@ class ObstacleAvoidanceNode(Node):
             self._start_dodge(snap)
             return self._handle_dodge(twist, snap, front, now)
 
-        # Static obstacle confirmed: check side/rear clearances, back up if
-        # possible, then dodge toward the clearer side. Do not creep straight
-        # back into an obstacle that has already been classified.
+        # Static obstacle confirmed: only take evasive action once the obstacle
+        # is within stop_distance. If still further away, creep forward — the
+        # obstacle may clear on its own (dynamic) or the robot may find a gap
+        # before needing to dodge.
         self._static_confirmed = False
+        if front > self._stop:
+            twist.linear.x = self._creep_speed
+            twist.angular.z = 0.0
+            return True
         if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
             self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
             return self._handle_backup(twist, snap, now)
@@ -1265,7 +1270,16 @@ class ObstacleAvoidanceNode(Node):
             left <= self._corner_backup_both_sides
             and right <= self._corner_backup_both_sides
         )
-        return (front_pinched and side_pinched) or both_sides_pinched
+        if not ((front_pinched and side_pinched) or both_sides_pinched):
+            return False
+        # Passable narrow gap: both sides still wide enough for the robot to
+        # drive through and front is not yet at the hard stop zone.
+        min_passable = max(self._side_guard * 2.0, 0.12)
+        if (front > self._stop
+                and left >= min_passable
+                and right >= min_passable):
+            return False
+        return True
 
     def _edge_escape_needed(self, snap: Snap, front: float) -> bool:
         if not self._edge_escape_enabled:
@@ -1296,7 +1310,17 @@ class ObstacleAvoidanceNode(Node):
         front_blocked = front <= self._clear and not self._depth_confirms_clear(snap)
         left_blocked = math.isfinite(snap.left) and snap.left < self._dodge_clear
         right_blocked = math.isfinite(snap.right) and snap.right < self._dodge_clear
-        return front_blocked and left_blocked and right_blocked
+        if not (front_blocked and left_blocked and right_blocked):
+            return False
+        # Narrow corridor: both sides are closed for a dodge but still wide
+        # enough for the robot to drive through. Only treat as true dead-end
+        # once the front obstacle is within the hard stop zone.
+        min_passable = max(self._side_guard * 2.0, 0.12)
+        if (front > self._stop
+                and math.isfinite(snap.left) and snap.left >= min_passable
+                and math.isfinite(snap.right) and snap.right >= min_passable):
+            return False
+        return True
 
     def _clearer_side(self, left: float, right: float) -> float:
         left_clear = left if math.isfinite(left) else math.inf
