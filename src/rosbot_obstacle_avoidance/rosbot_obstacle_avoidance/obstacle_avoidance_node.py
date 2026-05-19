@@ -811,26 +811,11 @@ class ObstacleAvoidanceNode(Node):
             self._start_corner_backup()
             return True
 
-        # Low obstacles such as slippers/feet should be avoided as soon as the
-        # OAK low region is confident. Do not creep down to stop_distance,
-        # because the robot can physically ride over them before LIDAR agrees.
-        if self._low_obstacle_hit(snap):
-            self._static_confirmed = False
-            if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
-                self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
-                return self._handle_backup(twist, snap, now)
-            self._start_dodge(snap)
-            return self._handle_dodge(twist, snap, front, now)
-
-        # Static obstacle confirmed: only take evasive action once the obstacle
-        # is within stop_distance. If still further away, creep forward — the
-        # obstacle may clear on its own (dynamic) or the robot may find a gap
-        # before needing to dodge.
+        # Obstacle confirmed after observe_frames. Dodge immediately toward the
+        # clearer side — creeping forward only delays the maneuver and risks
+        # rolling over a low object before LIDAR detects it.
+        # At this point front <= clear_distance is guaranteed by the clear-exit above.
         self._static_confirmed = False
-        if front > self._stop:
-            twist.linear.x = self._creep_speed
-            twist.angular.z = 0.0
-            return True
         if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
             self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
             return self._handle_backup(twist, snap, now)
@@ -866,6 +851,12 @@ class ObstacleAvoidanceNode(Node):
             return self._handle_backup(twist, snap, now)
 
         if self._too_close(snap):
+            self._start_backup()
+            return self._handle_backup(twist, snap, now)
+
+        # Low object (below LIDAR plane) detected by OAK during the arc: abort
+        # and back up so the robot doesn't ride over it.
+        if self._low_obstacle_hit(snap):
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 
