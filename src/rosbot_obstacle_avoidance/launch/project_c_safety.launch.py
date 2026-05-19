@@ -70,7 +70,7 @@ def generate_launch_description():
         DeclareLaunchArgument('imu_topic', default_value='/imu'),
         DeclareLaunchArgument('front_tof_topics', default_value='/range/fl,/range/fr'),
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
-        DeclareLaunchArgument('max_speed', default_value='0.12'),
+        DeclareLaunchArgument('max_speed', default_value='0.20'),
         DeclareLaunchArgument('emergency_distance', default_value='0.10'),
         DeclareLaunchArgument('perception_obstacle_distance', default_value='0.25'),
         DeclareLaunchArgument('perception_clear_distance', default_value='0.25'),

@@ -305,7 +305,7 @@ echo "[ok] POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC_ARG"
 echo "[ok] DEPTH_TOPIC=$DEPTH_TOPIC_ARG"
 echo "[ok] USE_DEPTH=$USE_DEPTH_ARG"
 echo "[ok] USE_POINTCLOUD=$USE_POINTCLOUD_ARG"
-echo "[ok] MAX_SPEED=${MAX_SPEED:-0.12}"
+echo "[ok] MAX_SPEED=${MAX_SPEED:-0.20}"
 echo "[ok] CLEAR_DISTANCE=${CLEAR_DISTANCE:-0.25}"
 echo "[ok] STOP_DISTANCE=${STOP_DISTANCE:-0.25}"
 echo "[ok] DODGE_CLEARANCE=${DODGE_CLEARANCE:-0.45}"
@@ -333,7 +333,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
   local_only:="${PROJECT_C_LOCAL_ONLY}" \
-  max_speed:="${MAX_SPEED:-0.12}" \
+  max_speed:="${MAX_SPEED:-0.20}" \
   emergency_distance:="${EMERGENCY_DISTANCE:-0.10}" \
   perception_obstacle_distance:="${PERCEPTION_OBSTACLE_DISTANCE:-0.25}" \
   perception_clear_distance:="${PERCEPTION_CLEAR_DISTANCE:-0.25}" \

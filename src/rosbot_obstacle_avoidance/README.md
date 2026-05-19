@@ -191,7 +191,7 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `max_speed` | `0.12` | Roaming speed in clear space |
+| `max_speed` | `0.20` | Roaming speed in clear space |
 | `clear_distance` | `0.25` | Front path distance that starts observe for static obstacles |
 | `stop_distance` | `0.25` | Confirmed static obstacle distance that starts backup/dodge |
 | `low_obstacle_distance` | `0.30` | OAK low-view distance that starts avoidance for low objects without long-range false positives |
