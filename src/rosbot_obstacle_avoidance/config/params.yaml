@@ -144,7 +144,7 @@ obstacle_avoidance:
     side_guard_distance: 0.08
     side_escape_distance: 0.08
     side_escape_release_distance: 0.14
-    side_escape_forward_speed: 0.025
+    side_escape_forward_speed: 0.0
     side_escape_angular_speed: 0.30
     side_escape_counter_scale: 0.60
     side_escape_sec: 0.75
@@ -156,8 +156,9 @@ obstacle_avoidance:
     edge_escape_sec: 0.80
     edge_escape_max_attempts: 3
     corner_backup_side_distance: 0.45
-    corner_backup_front_distance: 0.25
+    corner_backup_front_distance: 0.45
     corner_backup_both_sides_distance: 0.45
+    corner_backup_sec: 1.40
     dynamic_observe_distance: 1.00
     observe_frames: 8          # frames to confirm obstacle before classify static/dynamic
     clear_observe_frames: 3

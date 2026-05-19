@@ -224,6 +224,9 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
 | `side_guard_distance` | `0.08` | Side clearance that triggers side escape before scraping a doorway |
 | `side_escape_distance` | `0.08` | Side clearance needed to keep side escape active |
+| `side_escape_forward_speed` | `0.0` | Side escape pivots in place instead of driving deeper into a doorway edge |
+| `corner_backup_front_distance` | `0.45` | Backs out when front is near and side clearance is below target |
+| `corner_backup_sec` | `1.40` | Longer backup before re-observing a pinned doorway/corner |
 | `contact_stall_sec` | `5.0` | Forward command plus near-zero odom for this long triggers backup then rotate |
 | `require_battery_ok` | `false` | When true, requires a fresh battery reading before motion |
 | `min_battery_voltage` | `8.5` | Holds zero velocity below this pack voltage when `require_battery_ok` is true |

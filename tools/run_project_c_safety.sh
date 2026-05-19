@@ -355,14 +355,15 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   side_guard_distance:="${SIDE_GUARD_DISTANCE:-0.08}" \
   side_escape_distance:="${SIDE_ESCAPE_DISTANCE:-0.08}" \
   side_escape_release_distance:="${SIDE_ESCAPE_RELEASE_DISTANCE:-0.14}" \
-  side_escape_forward_speed:="${SIDE_ESCAPE_FORWARD_SPEED:-0.025}" \
+  side_escape_forward_speed:="${SIDE_ESCAPE_FORWARD_SPEED:-0.0}" \
   side_escape_counter_scale:="${SIDE_ESCAPE_COUNTER_SCALE:-0.60}" \
   side_escape_sec:="${SIDE_ESCAPE_SEC:-0.75}" \
   side_escape_max_attempts:="${SIDE_ESCAPE_MAX_ATTEMPTS:-4}" \
   edge_escape_front_distance:="${EDGE_ESCAPE_FRONT_DISTANCE:-0.30}" \
   edge_escape_clearance:="${EDGE_ESCAPE_CLEARANCE:-0.45}" \
   corner_backup_side_distance:="${CORNER_BACKUP_SIDE_DISTANCE:-0.45}" \
-  corner_backup_front_distance:="${CORNER_BACKUP_FRONT_DISTANCE:-0.25}" \
+  corner_backup_front_distance:="${CORNER_BACKUP_FRONT_DISTANCE:-0.45}" \
   corner_backup_both_sides_distance:="${CORNER_BACKUP_BOTH_SIDES_DISTANCE:-0.45}" \
+  corner_backup_sec:="${CORNER_BACKUP_SEC:-1.40}" \
   require_battery_ok:="${REQUIRE_BATTERY_OK:-false}" \
   "$@"

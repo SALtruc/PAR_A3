@@ -145,8 +145,9 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('edge_escape_sec', 0.80)
         self.declare_parameter('edge_escape_max_attempts', 3)
         self.declare_parameter('corner_backup_side_distance', 0.45)
-        self.declare_parameter('corner_backup_front_distance', 0.25)
+        self.declare_parameter('corner_backup_front_distance', 0.45)
         self.declare_parameter('corner_backup_both_sides_distance', 0.45)
+        self.declare_parameter('corner_backup_sec', 1.40)
         self.declare_parameter('dynamic_observe_distance', 1.00)
 
         # Timings / behaviour limits
@@ -277,6 +278,7 @@ class ObstacleAvoidanceNode(Node):
             0.0,
             float(p('corner_backup_both_sides_distance').value),
         )
+        corner_backup_sec = float(p('corner_backup_sec').value)
         self._dynamic_observe = float(p('dynamic_observe_distance').value)
 
         self._observe_frames = max(1, int(p('observe_frames').value))
@@ -284,6 +286,7 @@ class ObstacleAvoidanceNode(Node):
         self._front_release = max(self._clear, float(p('front_release_distance').value))
         self._front_clear_exit_frames = max(1, int(p('front_clear_exit_frames').value))
         self._backup_sec = float(p('backup_sec').value)
+        self._corner_backup_sec = max(self._backup_sec, corner_backup_sec)
         self._dodge_pivot_sec = max(0.0, float(p('dodge_pivot_sec').value))
         self._dodge_sec = math.radians(float(p('dodge_step_deg').value)) / max(abs(self._dodge_ang), 0.01)
         self._rotate_sec = math.radians(float(p('rotation_step_deg').value)) / max(abs(self._rot_ang), 0.01)
@@ -391,6 +394,7 @@ class ObstacleAvoidanceNode(Node):
             sep,
             f'front observe <= {_cm(self._clear)} | dodge <= {_cm(self._stop)} | hard backup <= {_cm(self._hard_backup)}',
             f'side clearance target >= {_cm(self._dodge_clear)} | side scrape <= {_cm(self._side_guard)}',
+            f'corner backup: front <= {_cm(self._corner_backup_front)} and side <= {_cm(self._corner_backup_side)}',
             f'low obstacle <= {_cm(self._low_obstacle_distance)} | low backup <= {_cm(self._low_obstacle_backup)} | low min pts={self._low_obstacle_min_points} | hold={self._low_obstacle_hold_sec:.1f}s',
             f'ToF emergency <= {_cm(self._front_tof_hard)} | rear stop <= {_cm(self._rear_stop)}',
             f'recovery: backup {self._backup_sec:.2f}s, rotate commit {self._rotate_commit_sec:.2f}s',
@@ -620,7 +624,7 @@ class ObstacleAvoidanceNode(Node):
         # should back out before pivoting, otherwise the robot can swing into
         # table legs / wall corners.
         if self._corner_backup_needed(snap, front):
-            self._start_backup()
+            self._start_corner_backup()
             self._handle_backup(twist, snap, now)
             self._log('corner_backup', snap)
             self._publish_cmd(twist)
@@ -702,6 +706,11 @@ class ObstacleAvoidanceNode(Node):
         self._observe_count += 1
         now = time.monotonic()
 
+        if self._corner_backup_needed(snap, front):
+            self._static_confirmed = False
+            self._start_corner_backup()
+            return self._handle_backup(twist, snap, now)
+
         if self._too_close(snap):
             self._static_confirmed = False
             self._start_backup()
@@ -711,11 +720,6 @@ class ObstacleAvoidanceNode(Node):
             self._static_confirmed = False
             self._start_backup(self._surprise_backup_sec, then_observe=True)
             self._last_surprise_backup = now
-            return self._handle_backup(twist, snap, now)
-
-        if self._corner_backup_needed(snap, front):
-            self._static_confirmed = False
-            self._start_backup()
             return self._handle_backup(twist, snap, now)
 
         if self._edge_escape_needed(snap, front):
@@ -778,7 +782,7 @@ class ObstacleAvoidanceNode(Node):
         # Dead-end check first.
         if self._dead_end(snap, front):
             self._static_confirmed = False
-            self._start_backup()
+            self._start_corner_backup()
             return True
 
         # Low obstacles such as slippers/feet should be avoided as soon as the
@@ -815,8 +819,8 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DODGE, self._dodge_sec)
 
     def _handle_dodge(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
-        if self._too_close(snap):
-            self._start_backup()
+        if self._corner_backup_needed(snap, front):
+            self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
 
         if self._surprise_backup_needed(snap, front, now):
@@ -824,7 +828,7 @@ class ObstacleAvoidanceNode(Node):
             self._last_surprise_backup = now
             return self._handle_backup(twist, snap, now)
 
-        if self._corner_backup_needed(snap, front):
+        if self._too_close(snap):
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 
@@ -880,8 +884,8 @@ class ObstacleAvoidanceNode(Node):
     def _handle_side_escape(self, twist: Twist, snap: Snap, now: float) -> bool:
         # Hard front danger still has priority.
         front = self._effective_front(snap)
-        if self._too_close(snap):
-            self._start_backup()
+        if self._corner_backup_needed(snap, front):
+            self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
 
         if self._surprise_backup_needed(snap, front, now):
@@ -889,7 +893,7 @@ class ObstacleAvoidanceNode(Node):
             self._last_surprise_backup = now
             return self._handle_backup(twist, snap, now)
 
-        if self._corner_backup_needed(snap, front):
+        if self._too_close(snap):
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 
@@ -914,7 +918,7 @@ class ObstacleAvoidanceNode(Node):
         elapsed = max(0.0, now - self._state_start)
         away_sec = max(0.15, self._side_escape_sec * 0.45)
         front_has_room = (not math.isfinite(front)) or front >= self._stop
-        forward = self._side_escape_forward if front_has_room else 0.0
+        forward = 0.0
 
         if now < self._state_end:
             twist.linear.x = forward
@@ -934,7 +938,7 @@ class ObstacleAvoidanceNode(Node):
             twist.angular.z = self._turn_dir * self._side_escape_ang
             return True
 
-        self._start_backup()
+        self._start_corner_backup()
         return self._handle_backup(twist, snap, now)
 
     def _start_edge_escape(self, snap: Snap):
@@ -947,7 +951,7 @@ class ObstacleAvoidanceNode(Node):
     def _handle_edge_escape(self, twist: Twist, snap: Snap, now: float) -> bool:
         front = self._effective_front(snap)
         if self._corner_backup_needed(snap, front):
-            self._start_backup()
+            self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
 
         if now < self._state_end:
@@ -957,7 +961,7 @@ class ObstacleAvoidanceNode(Node):
 
         if self._edge_escape_needed(snap, front):
             if self._edge_escape_count >= self._edge_escape_max_attempts:
-                self._start_backup()
+                self._start_corner_backup()
                 return True
             self._start_edge_escape(snap)
             twist.linear.x = 0.0
@@ -980,6 +984,9 @@ class ObstacleAvoidanceNode(Node):
         self._backup_then_observe = then_observe
         self._backup_then_dodge = then_dodge
         self._set_state(BACKUP, self._backup_sec if duration is None else duration)
+
+    def _start_corner_backup(self):
+        self._start_backup(self._corner_backup_sec, then_observe=True)
 
     def _handle_backup(self, twist: Twist, snap: Snap, now: float) -> bool:
         rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
@@ -1009,11 +1016,11 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(ROTATE, self._rotate_sec)
 
     def _handle_rotate(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
-        if self._too_close(snap):
-            self._start_backup()
+        if self._corner_backup_needed(snap, front):
+            self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
 
-        if self._corner_backup_needed(snap, front):
+        if self._too_close(snap):
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 

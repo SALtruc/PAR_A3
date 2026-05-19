@@ -91,7 +91,7 @@ def generate_launch_description():
         DeclareLaunchArgument('side_guard_distance', default_value='0.08'),
         DeclareLaunchArgument('side_escape_distance', default_value='0.08'),
         DeclareLaunchArgument('side_escape_release_distance', default_value='0.14'),
-        DeclareLaunchArgument('side_escape_forward_speed', default_value='0.025'),
+        DeclareLaunchArgument('side_escape_forward_speed', default_value='0.0'),
         DeclareLaunchArgument('side_escape_angular_speed', default_value='0.30'),
         DeclareLaunchArgument('side_escape_counter_scale', default_value='0.60'),
         DeclareLaunchArgument('side_escape_sec', default_value='0.75'),
@@ -103,8 +103,9 @@ def generate_launch_description():
         DeclareLaunchArgument('edge_escape_sec', default_value='0.80'),
         DeclareLaunchArgument('edge_escape_max_attempts', default_value='3'),
         DeclareLaunchArgument('corner_backup_side_distance', default_value='0.45'),
-        DeclareLaunchArgument('corner_backup_front_distance', default_value='0.25'),
+        DeclareLaunchArgument('corner_backup_front_distance', default_value='0.45'),
         DeclareLaunchArgument('corner_backup_both_sides_distance', default_value='0.45'),
+        DeclareLaunchArgument('corner_backup_sec', default_value='1.40'),
         DeclareLaunchArgument('observe_speed', default_value='0.0'),
         DeclareLaunchArgument('dodge_forward_speed', default_value='0.035'),
         DeclareLaunchArgument('dodge_angular_speed', default_value='0.30'),
@@ -272,6 +273,7 @@ def generate_launch_description():
                 'corner_backup_both_sides_distance': as_float(
                     'corner_backup_both_sides_distance'
                 ),
+                'corner_backup_sec': as_float('corner_backup_sec'),
                 'dynamic_observe_distance': as_float('dynamic_observe_distance'),
                 'observe_frames': as_int('observe_frames'),
                 'clear_observe_frames': as_int('clear_observe_frames'),
