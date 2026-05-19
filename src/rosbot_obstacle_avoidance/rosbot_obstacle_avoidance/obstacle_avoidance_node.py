@@ -811,20 +811,44 @@ class ObstacleAvoidanceNode(Node):
             self._start_corner_backup()
             return True
 
-        # Obstacle confirmed after observe_frames. Creep slowly toward stop_distance
-        # so transient noise has time to clear; the clear-exit above will return to
-        # DRIVE if the obstacle disappears. Only dodge once front <= stop_distance.
-        if front > self._stop:
-            twist.linear.x = self._creep_speed
+        # Static confirmed or dynamic timed out.
+        # Decision is based on distance zones:
+        #   - hard safety zone  -> BACKUP
+        #   - observe/action zone -> limited static creep OR DODGE
+        #   - clear zone -> DRIVE
+        #
+        # OAK depth/point cloud can advise through dynamic/low-obstacle flags,
+        # but should not make the robot creep into uncertain/dynamic objects.
+        self._static_confirmed = False
+
+        if self._too_close(snap) or (math.isfinite(front) and front <= self._hard_backup):
+            self._start_backup()
+            return self._handle_backup(twist, snap, now)
+
+        can_creep_static = (
+            not snap.dynamic
+            and not self._low_obstacle_hit(snap)
+            and math.isfinite(front)
+            and (self._stop + 0.08) < front <= self._clear
+            and (not math.isfinite(snap.left) or snap.left > self._side_guard)
+            and (not math.isfinite(snap.right) or snap.right > self._side_guard)
+            and self._observe_count <= self._observe_frames + 10
+        )
+
+        if can_creep_static:
+            twist.linear.x = min(self._creep_speed, 0.015)
             twist.angular.z = 0.0
             return True
 
-        self._static_confirmed = False
-        if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
-            self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
-            return self._handle_backup(twist, snap, now)
-        self._start_dodge(snap)
-        return self._handle_dodge(twist, snap, front, now)
+        if math.isfinite(front) and front <= self._clear:
+            if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
+                self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
+                return self._handle_backup(twist, snap, now)
+            self._start_dodge(snap)
+            return self._handle_dodge(twist, snap, front, now)
+
+        self._set_state(DRIVE)
+        return False
 
     def _front_suspicious_without_dynamic(self, snap: Snap, front: float) -> bool:
         """True when LIDAR, depth, or low sensors — not the dynamic motion flag —
@@ -1165,18 +1189,36 @@ class ObstacleAvoidanceNode(Node):
         )
 
     def _effective_front(self, snap: Snap) -> float:
-        """Return the conservative fused front distance used by the FSM."""
-        if math.isfinite(snap.front_fused):
-            return snap.front_fused
-        candidates = [snap.front_lidar, snap.front_depth]
-        if self._valid_oak_low(snap) and snap.front_oak_low <= self._low_obstacle_distance:
-            candidates.append(snap.front_oak_low)
-        if self._valid_depth_low(snap) and snap.front_depth_low <= self._low_obstacle_distance:
-            candidates.append(snap.front_depth_low)
+        """Main front distance used by FSM.
+
+        Role-based fusion:
+        - ToF close range = emergency/safety override.
+        - LIDAR = primary navigation front.
+        - OAK depth = fallback if LIDAR missing.
+        - OAK low region = support for low obstacle.
+        """
+        candidates = []
+
+        # ToF only when close enough to matter.
         if math.isfinite(snap.front_tof) and snap.front_tof <= self._front_tof_obstacle:
             candidates.append(snap.front_tof)
-        finite = [value for value in candidates if math.isfinite(value)]
-        return min(finite) if finite else math.inf
+
+        # LIDAR is the main front sensor.
+        if snap.lidar_ok and math.isfinite(snap.front_lidar):
+            candidates.append(snap.front_lidar)
+
+        # OAK depth is fallback only if LIDAR has no useful reading.
+        if not candidates and snap.depth_ok and math.isfinite(snap.front_depth):
+            candidates.append(snap.front_depth)
+
+        # OAK low-object support.
+        if self._valid_oak_low(snap) and snap.front_oak_low <= self._low_obstacle_distance:
+            candidates.append(snap.front_oak_low)
+
+        if self._valid_depth_low(snap) and snap.front_depth_low <= self._low_obstacle_distance:
+            candidates.append(snap.front_depth_low)
+
+        return min(candidates) if candidates else math.inf
 
     def _front_suspicious(self, snap: Snap, front: float) -> bool:
         fused_suspicious = math.isfinite(front) and front <= self._clear
@@ -1207,6 +1249,7 @@ class ObstacleAvoidanceNode(Node):
     def _depth_confirms_clear(self, snap: Snap) -> bool:
         if self._low_obstacle_hit(snap):
             return False
+
         return (
             snap.depth_ok
             and math.isfinite(snap.front_depth)
@@ -1220,13 +1263,7 @@ class ObstacleAvoidanceNode(Node):
                 not math.isfinite(snap.front_tof)
                 or snap.front_tof >= self._clear
             )
-            and (
-                not math.isfinite(snap.front_fused)
-                or snap.front_fused >= self._clear
-            )
-            and not snap.dynamic
         )
-
     def _too_close(self, snap: Snap) -> bool:
         # Hard safety: backup only when the front is closer than the dodge
         # trigger, except low OAK obstacles which need a larger contact buffer.

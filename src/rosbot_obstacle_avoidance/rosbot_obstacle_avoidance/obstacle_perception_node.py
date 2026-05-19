@@ -1148,11 +1148,16 @@ class ObstaclePerceptionNode(Node):
         depth_left = _min_finite(depth_image_left, pointcloud_left)
         depth_right = _min_finite(depth_image_right, pointcloud_right)
 
+        # LIDAR is the primary navigation sensor.
+        # ToF only joins when it is close enough to be a safety signal.
         front_distance = _min_finite(
             lidar_front_control,
-            depth_front,
             front_tof_fusion,
         )
+        # If LIDAR is unavailable, depth image can act as fallback.
+        if not math.isfinite(front_distance) and math.isfinite(depth_front):
+            front_distance = depth_front
+
         left_distance = _min_finite(lidar_left, depth_left)
         right_distance = _min_finite(lidar_right, depth_right)
         rear_distance = _min_finite(lidar_rear, rear_tof_range)
@@ -1180,7 +1185,15 @@ class ObstaclePerceptionNode(Node):
             lidar_front_control < self._obstacle_distance
             or front_close_cluster
         )
-        blocked_depth = depth_front < self._depth_obstacle_distance
+        # Depth is support only during normal navigation.
+        # It only blocks if LIDAR is missing/unavailable.
+        blocked_depth = (
+            not scan_recent
+            and math.isfinite(depth_front)
+            and depth_front < self._depth_obstacle_distance
+        )
+
+        raw_blocked = blocked_lidar or blocked_depth or blocked_tof
         blocked_tof = front_tof_fusion < self._clear_distance
         lidar_emergency = (
             lidar_front_control < self._emergency_distance
@@ -1188,7 +1201,6 @@ class ObstaclePerceptionNode(Node):
         )
         depth_emergency = depth_front < self._emergency_distance
         tof_emergency = front_tof_range <= self._front_tof_hard_distance
-        raw_blocked = blocked_lidar or blocked_depth or blocked_tof
         raw_blocked_sources = []
         if blocked_lidar:
             raw_blocked_sources.append('lidar')
