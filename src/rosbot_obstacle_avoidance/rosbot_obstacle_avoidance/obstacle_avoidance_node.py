@@ -987,7 +987,7 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(BACKUP, self._backup_sec if duration is None else duration)
 
     def _start_corner_backup(self):
-        self._start_backup(self._corner_backup_sec, then_observe=True)
+        self._start_backup(self._corner_backup_sec)
 
     def _handle_backup(self, twist: Twist, snap: Snap, now: float) -> bool:
         rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
