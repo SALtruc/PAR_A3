@@ -21,8 +21,8 @@ obstacle_perception:
 
     # LIDAR safety/perception thresholds
     emergency_distance: 0.10
-    obstacle_distance: 0.25
-    clear_distance: 0.25
+    obstacle_distance: 0.45
+    clear_distance: 0.45
     front_center_angle_deg: 0.0
     front_angle_deg: 28.0
     front_percentile: 5.0
@@ -124,7 +124,7 @@ obstacle_avoidance:
     backup_sec: 1.00
 
     # Main thresholds
-    clear_distance: 0.25       # LIDAR/depth suspicious zone (start OBSERVE)
+    clear_distance: 0.45       # LIDAR/depth suspicious zone (start OBSERVE)
     stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
     low_obstacle_distance: 0.30        # low-object reaction distance; keeps slippers from triggering too far away

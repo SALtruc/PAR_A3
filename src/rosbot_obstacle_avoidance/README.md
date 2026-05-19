@@ -192,7 +192,7 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | Parameter | Default | Notes |
 |---|---|---|
 | `max_speed` | `0.20` | Roaming speed in clear space |
-| `clear_distance` | `0.25` | Front path distance that starts observe for static obstacles |
+| `clear_distance` | `0.45` | Front path distance that starts observe for static obstacles |
 | `stop_distance` | `0.25` | Confirmed static obstacle distance that starts backup/dodge |
 | `low_obstacle_distance` | `0.30` | OAK low-view distance that starts avoidance for low objects without long-range false positives |
 | `low_obstacle_backup_distance` | `0.20` | OAK low-view distance that backs up before the chassis rides over a low object |
@@ -211,8 +211,8 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `backup_sec` | `1.00` | Reverse duration before rotate/search |
 | `rear_stop_distance` | `0.20` | Cancels reverse if the rear is too close |
 | `emergency_distance` | `0.14` | Perception emergency threshold |
-| `perception_obstacle_distance` | `0.25` | Raw LIDAR distance that marks an obstacle |
-| `perception_clear_distance` | `0.25` | Raw distance that releases perception block |
+| `perception_obstacle_distance` | `0.45` | Raw LIDAR distance that marks an obstacle |
+| `perception_clear_distance` | `0.45` | Raw distance that releases perception block |
 | `front_center_angle_deg` | `0.0` | Adjust if the LIDAR front sector is rotated relative to `base_link` |
 | `front_close_min_rays` | `3` | Minimum LIDAR rays needed for a small obstacle cluster |
 | `front_close_min_ratio` | `0.01` | Minimum fraction of front rays needed for that cluster |

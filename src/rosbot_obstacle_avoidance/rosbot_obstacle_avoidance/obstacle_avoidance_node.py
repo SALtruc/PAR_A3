@@ -116,7 +116,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('backup_speed', 0.06)
 
         # Distances, metres
-        self.declare_parameter('clear_distance', 0.25)
+        self.declare_parameter('clear_distance', 0.45)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
         self.declare_parameter('low_obstacle_distance', 0.30)
@@ -367,6 +367,7 @@ class ObstacleAvoidanceNode(Node):
         self._tilt_pause_until = 0.0
         self._tilt_backup_pending = False
         self._tilt_recovery_active = False
+        self._tilt_rear_blocked_hold = False
         self._motion_cmd_since = None
         self._contact_pending = False
         self._contact_cooldown_until = 0.0
@@ -917,7 +918,7 @@ class ObstacleAvoidanceNode(Node):
 
         elapsed = max(0.0, now - self._state_start)
         away_sec = max(0.15, self._side_escape_sec * 0.45)
-        front_has_room = (not math.isfinite(front)) or front >= self._stop
+        front_has_room = (not math.isfinite(front)) or front >= self._clear
         forward = 0.0
 
         if now < self._state_end:
@@ -1423,7 +1424,27 @@ class ObstacleAvoidanceNode(Node):
         if not self._tilt_recovery_enabled or not self._imu_recent(now):
             self._tilt_backup_pending = False
             self._tilt_recovery_active = False
+            self._tilt_rear_blocked_hold = False
             return False
+
+        rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
+        backup_tilt = self._tilt_rad >= self._tilt_backup_rad
+        tilt_clear = self._tilt_rad < self._tilt_backup_rad * 0.75
+
+        if rear_blocked and backup_tilt:
+            self._tilt_backup_pending = False
+            self._tilt_recovery_active = False
+            self._tilt_rear_blocked_hold = True
+            self._set_state(STOPPED)
+            self._log('tilt_rear_blocked_stop', snap)
+            return True
+
+        if self._tilt_rear_blocked_hold:
+            if rear_blocked or not tilt_clear:
+                self._set_state(STOPPED)
+                self._log('tilt_rear_blocked_hold', snap)
+                return True
+            self._tilt_rear_blocked_hold = False
 
         severe_tilt = self._tilt_rad >= self._tilt_stop_rad
         if not severe_tilt:
@@ -1432,10 +1453,10 @@ class ObstacleAvoidanceNode(Node):
                 self._tilt_recovery_active = False
             return False
 
-        rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
         if rear_blocked:
             self._tilt_backup_pending = False
             self._tilt_recovery_active = False
+            self._tilt_rear_blocked_hold = True
             self._set_state(STOPPED)
             self._log('tilt_rear_blocked_stop', snap)
             return True
