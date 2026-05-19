@@ -164,6 +164,13 @@ def generate_launch_description():
         DeclareLaunchArgument('debug_period_sec', default_value='1.0'),
         DeclareLaunchArgument('local_only', default_value='false'),
         DeclareLaunchArgument('use_nav2_collision_monitor', default_value='false'),
+        DeclareLaunchArgument('depth_motion_enabled', default_value='true'),
+        DeclareLaunchArgument('depth_motion_delta_m', default_value='0.20'),
+        DeclareLaunchArgument('depth_motion_near_m', default_value='0.90'),
+        DeclareLaunchArgument('depth_motion_min_ratio', default_value='0.05'),
+        DeclareLaunchArgument('depth_motion_confirm_frames', default_value='4'),
+        DeclareLaunchArgument('depth_motion_ego_suppress_ang', default_value='0.10'),
+        DeclareLaunchArgument('depth_motion_ego_suppress_lin', default_value='-0.005'),
     ]
 
     obstacle_perception = Node(
@@ -221,6 +228,8 @@ def generate_launch_description():
                 'dynamic_closing_speed': as_float('dynamic_closing_speed'),
                 'obstacle_hold_sec': as_float('obstacle_hold_sec'),
                 'clear_confirm_sec': as_float('clear_confirm_sec'),
+                'depth_motion_ego_suppress_ang': as_float('depth_motion_ego_suppress_ang'),
+                'depth_motion_ego_suppress_lin': as_float('depth_motion_ego_suppress_lin'),
             },
         ],
         output='screen',
