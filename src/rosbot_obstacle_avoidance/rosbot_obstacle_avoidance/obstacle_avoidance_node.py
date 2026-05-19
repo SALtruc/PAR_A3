@@ -812,34 +812,29 @@ class ObstacleAvoidanceNode(Node):
             return True
 
         # Static confirmed or dynamic timed out.
-        # Decision is based on distance zones:
-        #   - hard safety zone  -> BACKUP
-        #   - observe/action zone -> limited static creep OR DODGE
-        #   - clear zone -> DRIVE
-        #
-        # OAK depth/point cloud can advise through dynamic/low-obstacle flags,
-        # but should not make the robot creep into uncertain/dynamic objects.
+        # Controlled creep is only allowed for stable static obstacles.
         self._static_confirmed = False
 
+        # Hard safety zone: too close means back up instead of dodging forward.
         if self._too_close(snap) or (math.isfinite(front) and front <= self._hard_backup):
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 
-        can_creep_static = (
+        can_creep = (
             not snap.dynamic
             and not self._low_obstacle_hit(snap)
             and math.isfinite(front)
-            and (self._stop + 0.08) < front <= self._clear
+            and self._stop + 0.08 < front <= self._clear
             and (not math.isfinite(snap.left) or snap.left > self._side_guard)
             and (not math.isfinite(snap.right) or snap.right > self._side_guard)
-            and self._observe_count <= self._observe_frames + 10
+            and self._observe_count < self._observe_frames + 10
         )
-
-        if can_creep_static:
+        if can_creep:
             twist.linear.x = min(self._creep_speed, 0.015)
             twist.angular.z = 0.0
             return True
 
+        # Obstacle is still inside the observe/action zone: commit to dodge.
         if math.isfinite(front) and front <= self._clear:
             if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
                 self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
@@ -847,6 +842,7 @@ class ObstacleAvoidanceNode(Node):
             self._start_dodge(snap)
             return self._handle_dodge(twist, snap, front, now)
 
+        # Clear enough.
         self._set_state(DRIVE)
         return False
 
@@ -869,25 +865,51 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DODGE, self._dodge_sec)
 
     def _handle_dodge(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
-        elapsed = max(0.0, now - self._state_start)
+        if self._corner_backup_needed(snap, front):
+            self._start_corner_backup()
+            return self._handle_backup(twist, snap, now)
 
-        # Only real hard safety can interrupt DODGE.
-        if self._too_close(snap) or snap.tof_emergency:
+        if self._surprise_backup_needed(snap, front, now):
+            self._start_backup(self._surprise_backup_sec, then_observe=True)
+            self._last_surprise_backup = now
+            return self._handle_backup(twist, snap, now)
+
+        if self._too_close(snap):
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 
-        # Commit pivot first.
+        # Low object (below LIDAR plane) detected by OAK during the arc: abort
+        # and back up so the robot doesn't ride over it.
+        if self._low_obstacle_hit(snap):
+            self._start_backup()
+            return self._handle_backup(twist, snap, now)
+
+        if self._edge_escape_needed(snap, front):
+            self._start_edge_escape(snap)
+            return self._handle_edge_escape(twist, snap, now)
+
+        elapsed = max(0.0, now - self._state_start)
         if elapsed < self._dodge_pivot_sec:
+            # Pure pivot: turn in place. Do NOT exit early — a partial rotation
+            # moves the obstacle out of the LIDAR front sector producing a
+            # false-clear reading that would cause the robot to drive straight
+            # into the obstacle.
             twist.linear.x = 0.0
             twist.angular.z = self._turn_dir * self._dodge_ang
             return True
 
-        # Commit arc.
         if now < self._state_end:
+            # Arc phase: forward + angular. Commit to the full arc.
+            # Do NOT exit early on a front-clear reading — the obstacle just
+            # rotated out of the scan sector; it is still physically there.
             twist.linear.x = self._dodge_forward
             twist.angular.z = self._turn_dir * self._dodge_ang
             return True
 
+        # Full arc completed. Re-enter OBSERVE to verify the new heading
+        # before resuming straight drive. If the obstacle is still detectable
+        # from the new heading, OBSERVE will initiate another dodge step —
+        # the robot keeps arcing until the obstacle is fully cleared.
         self._start_observe()
         twist.linear.x = 0.0
         twist.angular.z = 0.0
@@ -1189,29 +1211,25 @@ class ObstacleAvoidanceNode(Node):
         )
 
     def _effective_front(self, snap: Snap) -> float:
-        """Main front distance used by FSM.
+        """Main front distance used by the FSM.
 
         Role-based fusion:
-        - ToF close range = emergency/safety override.
-        - LIDAR = primary navigation front.
-        - OAK depth = fallback if LIDAR missing.
-        - OAK low region = support for low obstacle.
+        - ToF close range is a safety override.
+        - LIDAR is the primary navigation front.
+        - OAK depth is a fallback if LIDAR has no useful reading.
+        - OAK low regions support low-obstacle detection.
         """
         candidates = []
 
-        # ToF only when close enough to matter.
         if math.isfinite(snap.front_tof) and snap.front_tof <= self._front_tof_obstacle:
             candidates.append(snap.front_tof)
 
-        # LIDAR is the main front sensor.
         if snap.lidar_ok and math.isfinite(snap.front_lidar):
             candidates.append(snap.front_lidar)
 
-        # OAK depth is fallback only if LIDAR has no useful reading.
         if not candidates and snap.depth_ok and math.isfinite(snap.front_depth):
             candidates.append(snap.front_depth)
 
-        # OAK low-object support.
         if self._valid_oak_low(snap) and snap.front_oak_low <= self._low_obstacle_distance:
             candidates.append(snap.front_oak_low)
 
@@ -1249,7 +1267,6 @@ class ObstacleAvoidanceNode(Node):
     def _depth_confirms_clear(self, snap: Snap) -> bool:
         if self._low_obstacle_hit(snap):
             return False
-
         return (
             snap.depth_ok
             and math.isfinite(snap.front_depth)
@@ -1263,7 +1280,12 @@ class ObstacleAvoidanceNode(Node):
                 not math.isfinite(snap.front_tof)
                 or snap.front_tof >= self._clear
             )
+            and (
+                not math.isfinite(snap.front_fused)
+                or snap.front_fused >= self._clear
+            )
         )
+
     def _too_close(self, snap: Snap) -> bool:
         # Hard safety: backup only when the front is closer than the dodge
         # trigger, except low OAK obstacles which need a larger contact buffer.

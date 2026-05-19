@@ -1143,21 +1143,23 @@ class ObstaclePerceptionNode(Node):
         pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
         pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
         depth_low_front = self._depth_low_front if depth_image_recent else math.inf
+
+        # Role-based fusion:
+        # - LIDAR is the primary navigation/control front distance.
+        # - ToF contributes only when it is inside the close safety range.
+        # - OAK depth image is kept as secondary evidence/fallback.
+        # - OAK pointcloud is used for low-object support, not normal front control.
         depth_front = depth_image_front
         depth_motion_active = bool(depth_image_recent and self._depth_motion)
         depth_left = _min_finite(depth_image_left, pointcloud_left)
         depth_right = _min_finite(depth_image_right, pointcloud_right)
 
-        # LIDAR is the primary navigation sensor.
-        # ToF only joins when it is close enough to be a safety signal.
         front_distance = _min_finite(
             lidar_front_control,
             front_tof_fusion,
         )
-        # If LIDAR is unavailable, depth image can act as fallback.
         if not math.isfinite(front_distance) and math.isfinite(depth_front):
             front_distance = depth_front
-
         left_distance = _min_finite(lidar_left, depth_left)
         right_distance = _min_finite(lidar_right, depth_right)
         rear_distance = _min_finite(lidar_rear, rear_tof_range)
@@ -1185,22 +1187,25 @@ class ObstaclePerceptionNode(Node):
             lidar_front_control < self._obstacle_distance
             or front_close_cluster
         )
-        # Depth is support only during normal navigation.
-        # It only blocks if LIDAR is missing/unavailable.
+        # OAK depth is support/confirmation during normal navigation.
+        # It only becomes a direct blocker when LIDAR is unavailable.
         blocked_depth = (
             not scan_recent
             and math.isfinite(depth_front)
             and depth_front < self._depth_obstacle_distance
         )
-
-        raw_blocked = blocked_lidar or blocked_depth or blocked_tof
         blocked_tof = front_tof_fusion < self._clear_distance
         lidar_emergency = (
             lidar_front_control < self._emergency_distance
             or front_emergency_cluster
         )
-        depth_emergency = depth_front < self._emergency_distance
+        depth_emergency = (
+            not scan_recent
+            and math.isfinite(depth_front)
+            and depth_front < self._emergency_distance
+        )
         tof_emergency = front_tof_range <= self._front_tof_hard_distance
+        raw_blocked = blocked_lidar or blocked_depth or blocked_tof
         raw_blocked_sources = []
         if blocked_lidar:
             raw_blocked_sources.append('lidar')
