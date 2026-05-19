@@ -768,17 +768,29 @@ class ObstacleAvoidanceNode(Node):
         # Phase 2: obstacle confirmed after observe_frames.
         self._static_confirmed = True
 
-        # Dynamic object handling: hold position and wait up to dynamic_timeout_sec.
-        # If the dynamic flag clears (person moved away), the top check exits first.
+        # Dynamic object handling: hold position briefly, then decide based on
+        # actual sensor readings — not the dynamic flag alone.
         if snap.dynamic and self._dynamic_first_seen is not None:
             elapsed = now - self._dynamic_first_seen
+
+            # Depth confirms the path is open → dynamic was a false positive.
+            if self._depth_confirms_clear(snap):
+                self._static_confirmed = False
+                self._set_state(DRIVE)
+                return False
+
             if front > self._stop and elapsed < self._dynamic_timeout:
-                # Dynamic object still near but not dangerously close: hold still.
                 self._log('dynamic_wait', snap)
                 twist.linear.x = 0.0
                 twist.angular.z = 0.0
                 return True
-            # Dynamic timed out (>5s) OR entered stop zone → treat as static blocker.
+
+            # Timeout: only dodge if LIDAR/depth still see a real obstacle.
+            if not self._front_suspicious_without_dynamic(snap, front):
+                self._static_confirmed = False
+                self._set_state(DRIVE)
+                return False
+            # Still suspicious → fall through to static handling below.
 
         # Static confirmed (or dynamic timed out/too close).
         # Dead-end check first.
@@ -812,6 +824,18 @@ class ObstacleAvoidanceNode(Node):
             return self._handle_backup(twist, snap, now)
         self._start_dodge(snap)
         return self._handle_dodge(twist, snap, front, now)
+
+    def _front_suspicious_without_dynamic(self, snap: Snap, front: float) -> bool:
+        """True when LIDAR, depth, or low sensors — not the dynamic motion flag —
+        indicate a real obstacle within clear_distance. Used to decide whether a
+        dynamic timeout should trigger a dodge or just let the robot drive."""
+        if math.isfinite(front) and front <= self._clear:
+            return True
+        if snap.lidar_ok and math.isfinite(snap.front_lidar) and snap.front_lidar <= self._clear:
+            return True
+        if snap.depth_ok and math.isfinite(snap.front_depth) and snap.front_depth <= self._clear:
+            return True
+        return self._low_obstacle_hit(snap)
 
     def _start_dodge(self, snap: Snap):
         self._side_escape_count = 0
@@ -1030,23 +1054,29 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(ROTATE, self._rotate_sec)
 
     def _handle_rotate(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
-        if self._corner_backup_needed(snap, front):
-            self._start_corner_backup()
-            return self._handle_backup(twist, snap, now)
+        elapsed = max(0.0, now - self._state_start)
 
+        # Only hard safety (critically close front) can abort rotation early.
         if self._too_close(snap):
             self._start_backup()
+            return self._handle_backup(twist, snap, now)
+
+        # Commit to the full rotation arc before any soft checks run.
+        # This prevents corner_backup from cancelling rotation on the very
+        # first tick and causing a tight ROTATE→BACKUP→ROTATE loop.
+        if now < self._state_end and elapsed < self._rotate_commit_sec:
+            twist.linear.x = 0.0
+            twist.angular.z = self._turn_dir * self._rot_ang
+            return True
+
+        # Soft checks only after the robot has actually rotated.
+        if self._corner_backup_needed(snap, front):
+            self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
 
         if self._edge_escape_needed(snap, front):
             self._start_edge_escape(snap)
             return self._handle_edge_escape(twist, snap, now)
-
-        elapsed = max(0.0, now - self._state_start)
-        if now < self._state_end and elapsed < self._rotate_commit_sec:
-            twist.linear.x = 0.0
-            twist.angular.z = self._turn_dir * self._rot_ang
-            return True
 
         if (front > self._clear or self._depth_confirms_clear(snap)) and not self._low_obstacle_hit(snap):
             self._set_state(DRIVE)

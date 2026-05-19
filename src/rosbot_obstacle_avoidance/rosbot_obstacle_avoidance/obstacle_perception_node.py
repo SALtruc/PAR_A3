@@ -155,10 +155,10 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_motion_y_center', 0.68)
         self.declare_parameter('depth_motion_width_fraction', 0.45)
         self.declare_parameter('depth_motion_height_fraction', 0.38)
-        self.declare_parameter('depth_motion_delta_m', 0.10)
-        self.declare_parameter('depth_motion_near_m', 1.20)
-        self.declare_parameter('depth_motion_min_ratio', 0.015)
-        self.declare_parameter('depth_motion_confirm_frames', 2)
+        self.declare_parameter('depth_motion_delta_m', 0.20)
+        self.declare_parameter('depth_motion_near_m', 0.90)
+        self.declare_parameter('depth_motion_min_ratio', 0.05)
+        self.declare_parameter('depth_motion_confirm_frames', 4)
         # Suppress depth_motion when the robot itself is rotating or backing up.
         # Any |angular.z| above this (rad/s) counts as "robot rotating".
         self.declare_parameter('depth_motion_ego_suppress_ang', 0.10)
