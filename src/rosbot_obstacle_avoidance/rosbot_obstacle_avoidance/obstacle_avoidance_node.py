@@ -398,6 +398,7 @@ class ObstacleAvoidanceNode(Node):
             f'corner backup: front <= {_cm(self._corner_backup_front)} and side <= {_cm(self._corner_backup_side)}',
             f'low obstacle <= {_cm(self._low_obstacle_distance)} | low backup <= {_cm(self._low_obstacle_backup)} | low min pts={self._low_obstacle_min_points} | hold={self._low_obstacle_hold_sec:.1f}s',
             f'ToF emergency <= {_cm(self._front_tof_hard)} | rear stop <= {_cm(self._rear_stop)}',
+            'static flow: observe -> backup for turn room -> dodge/rotate toward clearer side',
             f'recovery: backup {self._backup_sec:.2f}s, rotate commit {self._rotate_commit_sec:.2f}s',
             f'side escape: release >= {_cm(self._side_escape_release)}, S-turn {self._side_escape_sec:.2f}s',
             'log: state/reason | obstacle + 4-side distances | OAK low-view',
@@ -676,7 +677,7 @@ class ObstacleAvoidanceNode(Node):
 
         # Priority 7: side collision guard. This is not corridor centering;
         # it only prevents scraping/hitting when the forward path is clear.
-        if self._side_danger(snap):
+        if self._side_danger(snap, front):
             self._start_side_escape(snap)
             self._handle_side_escape(twist, snap, now)
             self._log('side_guard_escape', snap)
@@ -797,16 +798,9 @@ class ObstacleAvoidanceNode(Node):
             self._start_dodge(snap)
             return self._handle_dodge(twist, snap, front, now)
 
-        # If still outside stop_distance, creep forward slowly.
-        # Robot approaches to stop_distance, then dodges.
-        if front > self._stop:
-            twist.linear.x = self._creep_speed
-            twist.angular.z = 0.0
-            return True
-
-        # At stop_distance: back up briefly so the dodge arc has side clearance,
-        # then pivot. Needed because OAK can't see close side objects while turning.
-        # Extra time added when rear is clear so the arc has more room.
+        # Static obstacle confirmed: check side/rear clearances, back up if
+        # possible, then dodge toward the clearer side. Do not creep straight
+        # back into an obstacle that has already been classified.
         self._static_confirmed = False
         if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
             self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
@@ -912,6 +906,11 @@ class ObstacleAvoidanceNode(Node):
         )
 
         if left_safe and right_safe:
+            self._side_escape_count = 0
+            self._set_state(DRIVE)
+            return False
+
+        if self._narrow_gap_drive_allowed(snap, front):
             self._side_escape_count = 0
             self._set_state(DRIVE)
             return False
@@ -1219,10 +1218,27 @@ class ObstacleAvoidanceNode(Node):
         )
         return lidar_too_close or depth_too_close or low_too_close or tof_too_close
 
-    def _side_danger(self, snap: Snap) -> bool:
+    def _side_danger(self, snap: Snap, front: float) -> bool:
+        if self._narrow_gap_drive_allowed(snap, front):
+            return False
         left_close = math.isfinite(snap.left) and snap.left < self._side_guard
         right_close = math.isfinite(snap.right) and snap.right < self._side_guard
         return left_close or right_close
+
+    def _narrow_gap_drive_allowed(self, snap: Snap, front: float) -> bool:
+        if math.isfinite(front) and front <= self._clear:
+            return False
+        if not (math.isfinite(snap.left) and math.isfinite(snap.right)):
+            return False
+
+        left = snap.left
+        right = snap.right
+        side_min = min(left, right)
+        side_max = max(left, right)
+        hard_scrape = max(0.03, self._side_guard * 0.40)
+        balanced_gap = (side_max - side_min) <= self._clearer_side_deadband
+        corridor_width = side_max <= self._side_escape_release
+        return side_min >= hard_scrape and balanced_gap and corridor_width
 
     def _surprise_backup_needed(self, snap: Snap, front: float, now: float) -> bool:
         if not self._surprise_backup_enabled:
@@ -1524,15 +1540,17 @@ class ObstacleAvoidanceNode(Node):
             else ''
         )
         low_hit = self._low_obstacle_hit(snap)
+        narrow_gap = self._narrow_gap_drive_allowed(snap, front)
         obstacle = (
             front <= self._clear
-            or snap.left <= self._side_guard
-            or snap.right <= self._side_guard
+            or (not narrow_gap and snap.left <= self._side_guard)
+            or (not narrow_gap and snap.right <= self._side_guard)
             or snap.rear <= self._rear_stop
             or low_hit
             or snap.dynamic
             or snap.tof_emergency
         )
+        gap_info = ' gap=narrow' if narrow_gap else ''
         oak_low_hit = (
             self._valid_oak_low(snap)
             and snap.front_oak_low <= self._low_obstacle_distance
@@ -1567,7 +1585,7 @@ class ObstacleAvoidanceNode(Node):
             f'oak_low={oak_low_status} dist={_cm(snap.front_oak_low)} '
             f'pts={snap.front_oak_low_count} pc={snap.front_oak_sample_count} '
             f'fallback={snap.front_oak_fallback_count} lidar_miss={lidar_miss} | '
-            f'dynamic={"YES" if snap.dynamic else "NO"}{dyn_elapsed}{tilt_info} '
+            f'dynamic={"YES" if snap.dynamic else "NO"}{dyn_elapsed}{tilt_info}{gap_info} '
             f'turn={"L" if self._turn_dir > 0 else "R"} obs={self._observe_count}'
         )
         if self._state in (OBSERVE, DODGE, SIDE_ESCAPE, EDGE_ESCAPE, BACKUP, ROTATE):

@@ -216,13 +216,14 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 | `front_center_angle_deg` | `0.0` | Adjust if the LIDAR front sector is rotated relative to `base_link` |
 | `front_close_min_rays` | `3` | Minimum LIDAR rays needed for a small obstacle cluster |
 | `front_close_min_ratio` | `0.01` | Minimum fraction of front rays needed for that cluster |
+| `depth_qos` | `auto` | Subscribes to OAK depth image with sensor-data and reliable QoS profiles |
 | `depth_obstacle_distance` | `0.45` | OAK point cloud/depth front obstacle threshold |
 | `dynamic_closing_speed` | `0.80` | m/s closing rate that marks dynamic obstacle |
 | `dynamic_observe_distance` | `1.00` | Dynamic front evidence inside this range triggers observe |
 | `obstacle_hold_sec` | `0.30` | Keeps obstacle detection latched across brief noisy clear frames |
 | `clear_confirm_sec` | `0.20` | Requires a stable clear front sector before leaving obstacle mode |
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
-| `side_guard_distance` | `0.08` | Side clearance that triggers side escape before scraping a doorway |
+| `side_guard_distance` | `0.08` | Side clearance that triggers side escape before scraping a doorway; balanced narrow gaps can pass when the front is clear |
 | `side_escape_distance` | `0.08` | Side clearance needed to keep side escape active |
 | `side_escape_forward_speed` | `0.0` | Side escape pivots in place instead of driving deeper into a doorway edge |
 | `corner_backup_front_distance` | `0.45` | Backs out when front is near and side clearance is below target |

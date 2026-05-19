@@ -117,6 +117,7 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_side_fraction', 0.30)
         self.declare_parameter('depth_height_fraction', 0.40)
         self.declare_parameter('depth_percentile', 50.0)
+        self.declare_parameter('depth_qos', 'auto')
         self.declare_parameter('pointcloud_frame', 'optical')
         self.declare_parameter('pointcloud_target_frame', 'base_link')
         self.declare_parameter('pointcloud_use_tf', True)
@@ -275,6 +276,9 @@ class ObstaclePerceptionNode(Node):
             0.0,
             min(100.0, float(self.get_parameter('depth_percentile').value)),
         )
+        self._depth_qos = str(
+            self.get_parameter('depth_qos').value
+        ).strip().lower().replace('-', '_')
         self._pointcloud_frame = str(
             self.get_parameter('pointcloud_frame').value
         ).strip().lower()
@@ -437,6 +441,8 @@ class ObstaclePerceptionNode(Node):
         self._tf_listener = None
         self._last_pointcloud_warn = 0.0
         self._last_depth_warn = 0.0
+        self._last_depth_stamp_key: tuple[int, int] | None = None
+        self._depth_subscription_labels: list[str] = []
         self._pointcloud_subscription_labels: list[str] = []
 
         if self._use_pointcloud and self._pointcloud_use_tf:
@@ -459,14 +465,16 @@ class ObstaclePerceptionNode(Node):
                 )
             )
         if self._use_depth:
-            self._subscriptions.append(
-                self.create_subscription(
-                    Image,
-                    depth_topic,
-                    self._on_depth,
-                    qos_profile_sensor_data,
+            for label, qos_profile in self._depth_qos_profiles():
+                self._subscriptions.append(
+                    self.create_subscription(
+                        Image,
+                        depth_topic,
+                        self._on_depth,
+                        qos_profile,
+                    )
                 )
-            )
+                self._depth_subscription_labels.append(label)
         if self._use_pointcloud:
             if point_cloud2 is None:
                 self.get_logger().warn(
@@ -513,12 +521,42 @@ class ObstaclePerceptionNode(Node):
             f'lidar={scan_topic if self._use_lidar else "disabled"}, '
             f'front_center={math.degrees(self._front_center_angle):.0f}deg, '
             f'depth_image={depth_topic if self._use_depth else "disabled"}, '
+            f'depth_qos={self._depth_qos_label()}, '
             f'pointcloud={pointcloud_topic if self._use_pointcloud else "disabled"}, '
             f'pointcloud_qos={self._pointcloud_qos_label()}, '
             f'pointcloud_tf={self._pointcloud_target_frame if self._pointcloud_use_tf else "fallback"}, '
             f'tof={",".join(tof_topics) if self._use_tof else "disabled"} '
             f'({tof_msg_type}), '
             f'out={obstacle_topic}'
+        )
+
+    def _depth_qos_label(self) -> str:
+        if not self._depth_subscription_labels:
+            return self._depth_qos
+        if self._depth_qos == 'auto':
+            return 'auto[' + ','.join(self._depth_subscription_labels) + ']'
+        return self._depth_subscription_labels[0]
+
+    def _depth_qos_profiles(self) -> list[tuple[str, QoSProfile]]:
+        if self._depth_qos in ('auto', ''):
+            return [
+                ('sensor_data', qos_profile_sensor_data),
+                ('reliable', self._reliable_volatile_qos()),
+            ]
+        if self._depth_qos in ('reliable',):
+            return [('reliable', self._reliable_volatile_qos())]
+        if self._depth_qos not in ('sensor_data', 'best_effort'):
+            self.get_logger().warn(
+                f'Unknown depth_qos={self._depth_qos!r}; using sensor_data.'
+            )
+        return [('sensor_data', qos_profile_sensor_data)]
+
+    def _reliable_volatile_qos(self) -> QoSProfile:
+        return QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
         )
 
     def _pointcloud_qos_label(self) -> str:
@@ -545,12 +583,7 @@ class ObstaclePerceptionNode(Node):
                 depth=10,
             )
         if qos_name in ('reliable',):
-            return QoSProfile(
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.VOLATILE,
-                history=HistoryPolicy.KEEP_LAST,
-                depth=10,
-            )
+            return self._reliable_volatile_qos()
         if qos_name not in ('sensor_data', 'best_effort', 'best-effort'):
             self.get_logger().warn(
                 f'Unknown pointcloud_qos={qos_name!r}; using sensor_data.'
@@ -585,6 +618,11 @@ class ObstaclePerceptionNode(Node):
         self._tof_range = self._tof_min_recent()
 
     def _on_depth(self, msg: Image):
+        stamp_key = (msg.header.stamp.sec, msg.header.stamp.nanosec)
+        if stamp_key == self._last_depth_stamp_key:
+            return
+        self._last_depth_stamp_key = stamp_key
+
         try:
             depth_img = self._bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
         except Exception:

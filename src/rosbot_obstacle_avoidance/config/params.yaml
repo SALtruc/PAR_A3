@@ -43,6 +43,7 @@ obstacle_perception:
     depth_side_fraction: 0.30
     depth_height_fraction: 0.40
     depth_percentile: 50.0
+    depth_qos: auto
 
     # OAK point cloud supports low/side obstacles and the full-fusion trial.
     pointcloud_frame: optical
@@ -168,7 +169,7 @@ obstacle_avoidance:
     avoid_turn_direction: -1.0 # fallback when side clearances are nearly tied; -1 = right
 
     # Static approach + dynamic timeout
-    creep_speed: 0.030         # m/s approach speed after static confirmed (to reach stop_distance then dodge)
+    creep_speed: 0.030         # reserved static approach speed; current safety flow backs up/dodges after observe
     dynamic_timeout_sec: 5.0   # seconds to wait for dynamic object to clear before treating as static
     dynamic_close_distance: 0.20  # sudden dynamic appearance threshold (within 20 cm)
     surprise_backup_enabled: false
