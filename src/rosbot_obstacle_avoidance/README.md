@@ -191,39 +191,39 @@ ros2 topic pub --once /collision_event std_msgs/msg/String "{data: collision}"
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `max_speed` | `0.215` | Roaming speed in clear space |
-| `clear_distance` | `0.35` | Front path distance treated as clear |
-| `stop_distance` | `0.25` | Confirmed static obstacle distance that starts dodge |
+| `max_speed` | `0.12` | Roaming speed in clear space |
+| `clear_distance` | `0.45` | Front path distance that starts observe for static obstacles |
+| `stop_distance` | `0.30` | Confirmed static obstacle distance that starts backup/dodge |
 | `low_obstacle_distance` | `0.30` | OAK low-view distance that starts avoidance for low objects without long-range false positives |
 | `low_obstacle_backup_distance` | `0.20` | OAK low-view distance that backs up before the chassis rides over a low object |
 | `low_obstacle_min_points` | `8` | Minimum low-region pointcloud points before low-object avoidance is trusted |
 | `low_obstacle_hold_sec` | `0.70` | Keeps a recent low-object hit alive across brief pointcloud dropouts |
-| `dodge_clearance` | `0.03` | Side clearance needed to avoid calling a dead end |
+| `dodge_clearance` | `0.08` | Side clearance needed to avoid calling a dead end |
 | `observe_frames` | `8` | Frames to observe before dodging |
 | `clear_observe_frames` | `3` | Frames to verify LIDAR/depth disagreement before driving straight |
-| `dodge_step_deg` | `30.0` | Gentle dodge limit; keeps dynamic avoidance below 45 degrees |
+| `dodge_step_deg` | `60.0` | Dodge arc limit after obstacle confirmation |
 | `robot_half_width_m` | `0.13` | Half-width of the ROSbot body plus a small margin for side clearance |
 | `front_path_half_width_m` | `0.14` | LIDAR path corridor checked in front of the full robot width |
 | `side_guard_forward_m` | `0.35` | Forward extent of side-edge collision checking |
 | `side_guard_rear_m` | `0.20` | Rear extent of side-edge collision checking |
 | `side_percentile` | `10.0` | Robust percentile used for side-edge clearance |
-| `backup_speed` | `0.07` | Reverse speed during too-close/dead-end recovery |
-| `backup_sec` | `0.70` | Reverse duration before rotate/search |
+| `backup_speed` | `0.06` | Reverse speed during too-close/dead-end recovery |
+| `backup_sec` | `1.00` | Reverse duration before rotate/search |
 | `rear_stop_distance` | `0.20` | Cancels reverse if the rear is too close |
 | `emergency_distance` | `0.14` | Perception emergency threshold |
-| `perception_obstacle_distance` | `0.22` | Raw LIDAR distance that marks an obstacle |
-| `perception_clear_distance` | `0.35` | Raw distance that releases perception block |
+| `perception_obstacle_distance` | `0.45` | Raw LIDAR distance that marks an obstacle |
+| `perception_clear_distance` | `0.45` | Raw distance that releases perception block |
 | `front_center_angle_deg` | `0.0` | Adjust if the LIDAR front sector is rotated relative to `base_link` |
 | `front_close_min_rays` | `3` | Minimum LIDAR rays needed for a small obstacle cluster |
 | `front_close_min_ratio` | `0.01` | Minimum fraction of front rays needed for that cluster |
 | `depth_obstacle_distance` | `0.45` | OAK point cloud/depth front obstacle threshold |
 | `dynamic_closing_speed` | `0.80` | m/s closing rate that marks dynamic obstacle |
-| `dynamic_observe_distance` | `0.80` | Dynamic front evidence inside this range triggers observe |
-| `obstacle_hold_sec` | `0.15` | Keeps obstacle detection latched across brief noisy clear frames |
-| `clear_confirm_sec` | `0.10` | Requires a stable clear front sector before leaving obstacle mode |
+| `dynamic_observe_distance` | `1.00` | Dynamic front evidence inside this range triggers observe |
+| `obstacle_hold_sec` | `0.30` | Keeps obstacle detection latched across brief noisy clear frames |
+| `clear_confirm_sec` | `0.20` | Requires a stable clear front sector before leaving obstacle mode |
 | `gap_angle_limit_deg` | `110.0` | LIDAR arc searched for navigable gaps |
-| `side_guard_distance` | `0.015` | Only this close triggers side escape |
-| `side_escape_distance` | `0.03` | Side clearance needed to leave side escape |
+| `side_guard_distance` | `0.08` | Side clearance that triggers side escape before scraping a doorway |
+| `side_escape_distance` | `0.08` | Side clearance needed to keep side escape active |
 | `contact_stall_sec` | `5.0` | Forward command plus near-zero odom for this long triggers backup then rotate |
 | `require_battery_ok` | `false` | When true, requires a fresh battery reading before motion |
 | `min_battery_voltage` | `8.5` | Holds zero velocity below this pack voltage when `require_battery_ok` is true |

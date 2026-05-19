@@ -108,7 +108,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.215)
+        self.declare_parameter('max_speed', 0.12)
         self.declare_parameter('observe_speed', 0.0)
         self.declare_parameter('dodge_forward_speed', 0.035)
         self.declare_parameter('dodge_angular_speed', 0.30)
@@ -116,37 +116,37 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('backup_speed', 0.06)
 
         # Distances, metres
-        self.declare_parameter('clear_distance', 0.35)
-        self.declare_parameter('stop_distance', 0.25)
-        self.declare_parameter('hard_backup_distance', 0.10)
+        self.declare_parameter('clear_distance', 0.45)
+        self.declare_parameter('stop_distance', 0.30)
+        self.declare_parameter('hard_backup_distance', 0.14)
         self.declare_parameter('low_obstacle_distance', 0.30)
         self.declare_parameter('low_obstacle_backup_distance', 0.20)
         self.declare_parameter('low_obstacle_min_points', 8)
         self.declare_parameter('low_obstacle_hold_sec', 0.70)
-        self.declare_parameter('front_tof_obstacle_distance', 0.30)
-        self.declare_parameter('front_tof_hard_distance', 0.12)
+        self.declare_parameter('front_tof_obstacle_distance', 0.35)
+        self.declare_parameter('front_tof_hard_distance', 0.15)
         self.declare_parameter('pre_dodge_backup_enabled', False)
         self.declare_parameter('pre_dodge_backup_sec', 0.40)
         self.declare_parameter('pre_dodge_backup_clear_bonus_sec', 0.80)
-        self.declare_parameter('dodge_clearance', 0.03)
+        self.declare_parameter('dodge_clearance', 0.08)
         self.declare_parameter('rear_stop_distance', 0.20)
-        self.declare_parameter('side_guard_distance', 0.03)
-        self.declare_parameter('side_escape_distance', 0.03)
-        self.declare_parameter('side_escape_release_distance', 0.08)
+        self.declare_parameter('side_guard_distance', 0.08)
+        self.declare_parameter('side_escape_distance', 0.08)
+        self.declare_parameter('side_escape_release_distance', 0.14)
         self.declare_parameter('side_escape_forward_speed', 0.025)
         self.declare_parameter('side_escape_angular_speed', 0.30)
         self.declare_parameter('side_escape_counter_scale', 0.60)
         self.declare_parameter('side_escape_sec', 0.75)
         self.declare_parameter('side_escape_max_attempts', 4)
         self.declare_parameter('edge_escape_enabled', True)
-        self.declare_parameter('edge_escape_front_distance', 0.15)
+        self.declare_parameter('edge_escape_front_distance', 0.30)
         self.declare_parameter('edge_escape_clearance', 0.30)
         self.declare_parameter('edge_escape_angular_speed', 0.30)
         self.declare_parameter('edge_escape_sec', 0.80)
         self.declare_parameter('edge_escape_max_attempts', 3)
-        self.declare_parameter('corner_backup_side_distance', 0.00)
-        self.declare_parameter('corner_backup_front_distance', 0.35)
-        self.declare_parameter('corner_backup_both_sides_distance', 0.00)
+        self.declare_parameter('corner_backup_side_distance', 0.10)
+        self.declare_parameter('corner_backup_front_distance', 0.45)
+        self.declare_parameter('corner_backup_both_sides_distance', 0.08)
         self.declare_parameter('dynamic_observe_distance', 1.00)
 
         # Timings / behaviour limits
@@ -154,7 +154,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_observe_frames', 3)
         self.declare_parameter('front_release_distance', 0.45)
         self.declare_parameter('front_clear_exit_frames', 5)
-        self.declare_parameter('backup_sec', 0.70)
+        self.declare_parameter('backup_sec', 1.00)
         self.declare_parameter('dodge_step_deg', 60.0)
         self.declare_parameter('dodge_pivot_sec', 0.60)
         self.declare_parameter('rotation_step_deg', 70.0)
@@ -1423,6 +1423,14 @@ class ObstacleAvoidanceNode(Node):
             if self._state not in (BACKUP, ROTATE):
                 self._tilt_recovery_active = False
             return False
+
+        rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
+        if rear_blocked:
+            self._tilt_backup_pending = False
+            self._tilt_recovery_active = False
+            self._set_state(STOPPED)
+            self._log('tilt_rear_blocked_stop', snap)
+            return True
 
         if self._state in (BACKUP, ROTATE) and self._tilt_recovery_active:
             return False

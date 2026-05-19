@@ -51,6 +51,7 @@ source "/opt/ros/${DISTRO}/setup.bash"
 source "${ROOT}/install/setup.bash"
 set -u
 export RMW_IMPLEMENTATION
+export ROS_DOMAIN_ID="${PROJECT_C_ROS_DOMAIN_ID:-${ROS_DOMAIN_ID:-0}}"
 
 case "${PROJECT_C_RESET_ROS2_DAEMON,,}" in
   1|true|yes|on)
@@ -304,9 +305,13 @@ echo "[ok] POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC_ARG"
 echo "[ok] DEPTH_TOPIC=$DEPTH_TOPIC_ARG"
 echo "[ok] USE_DEPTH=$USE_DEPTH_ARG"
 echo "[ok] USE_POINTCLOUD=$USE_POINTCLOUD_ARG"
+echo "[ok] MAX_SPEED=${MAX_SPEED:-0.12}"
+echo "[ok] CLEAR_DISTANCE=${CLEAR_DISTANCE:-0.45}"
+echo "[ok] STOP_DISTANCE=${STOP_DISTANCE:-0.30}"
 echo "[ok] LOW_OBSTACLE_DISTANCE=${LOW_OBSTACLE_DISTANCE:-0.30}"
 echo "[ok] LOW_OBSTACLE_BACKUP_DISTANCE=${LOW_OBSTACLE_BACKUP_DISTANCE:-0.20}"
 echo "[ok] LOW_OBSTACLE_HOLD_SEC=${LOW_OBSTACLE_HOLD_SEC:-0.70}"
+echo "[ok] SIDE_GUARD_DISTANCE=${SIDE_GUARD_DISTANCE:-0.08}"
 echo "[ok] POINTCLOUD_USE_TF=${POINTCLOUD_USE_TF:-false}"
 
 exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
@@ -327,9 +332,15 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   use_tof:="${USE_TOF:-true}" \
   use_nav2_collision_monitor:="${USE_NAV2_COLLISION_MONITOR:-false}" \
   local_only:="${PROJECT_C_LOCAL_ONLY}" \
-  max_speed:="${MAX_SPEED:-0.215}" \
+  max_speed:="${MAX_SPEED:-0.12}" \
+  emergency_distance:="${EMERGENCY_DISTANCE:-0.14}" \
+  perception_obstacle_distance:="${PERCEPTION_OBSTACLE_DISTANCE:-0.45}" \
+  perception_clear_distance:="${PERCEPTION_CLEAR_DISTANCE:-0.45}" \
+  clear_distance:="${CLEAR_DISTANCE:-0.45}" \
+  stop_distance:="${STOP_DISTANCE:-0.30}" \
+  hard_backup_distance:="${HARD_BACKUP_DISTANCE:-0.14}" \
   backup_speed:="${BACKUP_SPEED:-0.06}" \
-  backup_sec:="${BACKUP_SEC:-0.70}" \
+  backup_sec:="${BACKUP_SEC:-1.00}" \
   low_obstacle_distance:="${LOW_OBSTACLE_DISTANCE:-0.30}" \
   low_obstacle_backup_distance:="${LOW_OBSTACLE_BACKUP_DISTANCE:-0.20}" \
   pre_dodge_backup_enabled:="${PRE_DODGE_BACKUP_ENABLED:-true}" \
@@ -337,10 +348,19 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   pre_dodge_backup_clear_bonus_sec:="${PRE_DODGE_BACKUP_CLEAR_BONUS_SEC:-0.80}" \
   low_obstacle_min_points:="${LOW_OBSTACLE_MIN_POINTS:-8}" \
   low_obstacle_hold_sec:="${LOW_OBSTACLE_HOLD_SEC:-0.70}" \
-  side_escape_release_distance:="${SIDE_ESCAPE_RELEASE_DISTANCE:-0.08}" \
+  front_tof_obstacle_distance:="${FRONT_TOF_OBSTACLE_DISTANCE:-0.35}" \
+  front_tof_hard_distance:="${FRONT_TOF_HARD_DISTANCE:-0.15}" \
+  dodge_clearance:="${DODGE_CLEARANCE:-0.08}" \
+  side_guard_distance:="${SIDE_GUARD_DISTANCE:-0.08}" \
+  side_escape_distance:="${SIDE_ESCAPE_DISTANCE:-0.08}" \
+  side_escape_release_distance:="${SIDE_ESCAPE_RELEASE_DISTANCE:-0.14}" \
   side_escape_forward_speed:="${SIDE_ESCAPE_FORWARD_SPEED:-0.025}" \
   side_escape_counter_scale:="${SIDE_ESCAPE_COUNTER_SCALE:-0.60}" \
   side_escape_sec:="${SIDE_ESCAPE_SEC:-0.75}" \
   side_escape_max_attempts:="${SIDE_ESCAPE_MAX_ATTEMPTS:-4}" \
+  edge_escape_front_distance:="${EDGE_ESCAPE_FRONT_DISTANCE:-0.30}" \
+  corner_backup_side_distance:="${CORNER_BACKUP_SIDE_DISTANCE:-0.10}" \
+  corner_backup_front_distance:="${CORNER_BACKUP_FRONT_DISTANCE:-0.45}" \
+  corner_backup_both_sides_distance:="${CORNER_BACKUP_BOTH_SIDES_DISTANCE:-0.08}" \
   require_battery_ok:="${REQUIRE_BATTERY_OK:-false}" \
   "$@"

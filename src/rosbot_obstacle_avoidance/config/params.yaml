@@ -20,9 +20,9 @@ obstacle_perception:
     publish_hz: 20.0
 
     # LIDAR safety/perception thresholds
-    emergency_distance: 0.10
-    obstacle_distance: 0.35
-    clear_distance: 0.35
+    emergency_distance: 0.14
+    obstacle_distance: 0.45
+    clear_distance: 0.45
     front_center_angle_deg: 0.0
     front_angle_deg: 28.0
     front_percentile: 5.0
@@ -38,7 +38,7 @@ obstacle_perception:
     sensor_stale_sec: 1.0
 
     # OAK depth: secondary confirmation + dynamic object support
-    depth_obstacle_distance: 0.35
+    depth_obstacle_distance: 0.45
     depth_center_fraction: 0.33
     depth_side_fraction: 0.30
     depth_height_fraction: 0.40
@@ -106,7 +106,7 @@ obstacle_avoidance:
     control_hz: 20.0
 
     # Default movement
-    max_speed: 0.215
+    max_speed: 0.12
     observe_speed: 0.00
 
     # Gentle dodge, not strong corridor following
@@ -121,43 +121,43 @@ obstacle_avoidance:
     rotation_commit_sec: 0.65
     max_rotation_attempts: 3
     backup_speed: 0.06
-    backup_sec: 0.70
+    backup_sec: 1.00
 
     # Main thresholds
-    clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
-    stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
-    hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
+    clear_distance: 0.45       # LIDAR/depth suspicious zone (start OBSERVE)
+    stop_distance: 0.30        # static obstacle threshold -> DODGE after observation
+    hard_backup_distance: 0.14 # emergency threshold -> BACKUP; keep lower than stop_distance
     low_obstacle_distance: 0.30        # low-object reaction distance; keeps slippers from triggering too far away
     low_obstacle_backup_distance: 0.20  # backup for low obstacles before the chassis rides over them
     low_obstacle_min_points: 8
     low_obstacle_hold_sec: 0.70
-    front_tof_obstacle_distance: 0.30
-    front_tof_hard_distance: 0.12
+    front_tof_obstacle_distance: 0.35
+    front_tof_hard_distance: 0.15
     # Back up slightly before pivoting so the robot has side clearance during the arc.
     # Needed because OAK can't see close side objects while turning.
     pre_dodge_backup_enabled: true
     pre_dodge_backup_sec: 0.40
     pre_dodge_backup_clear_bonus_sec: 0.80  # extra backup when rear is unobstructed (~5 cm)
 
-    dodge_clearance: 0.03      # min side clearance for dead-end recovery
+    dodge_clearance: 0.08      # min side clearance for dead-end recovery
     rear_stop_distance: 0.20
-    side_guard_distance: 0.03
-    side_escape_distance: 0.03
-    side_escape_release_distance: 0.08
+    side_guard_distance: 0.08
+    side_escape_distance: 0.08
+    side_escape_release_distance: 0.14
     side_escape_forward_speed: 0.025
     side_escape_angular_speed: 0.30
     side_escape_counter_scale: 0.60
     side_escape_sec: 0.75
     side_escape_max_attempts: 4
     edge_escape_enabled: true
-    edge_escape_front_distance: 0.15
+    edge_escape_front_distance: 0.30
     edge_escape_clearance: 0.30
     edge_escape_angular_speed: 0.30
     edge_escape_sec: 0.80
     edge_escape_max_attempts: 3
-    corner_backup_side_distance: 0.00
-    corner_backup_front_distance: 0.35
-    corner_backup_both_sides_distance: 0.00
+    corner_backup_side_distance: 0.10
+    corner_backup_front_distance: 0.45
+    corner_backup_both_sides_distance: 0.08
     dynamic_observe_distance: 1.00
     observe_frames: 8          # frames to confirm obstacle before classify static/dynamic
     clear_observe_frames: 3
