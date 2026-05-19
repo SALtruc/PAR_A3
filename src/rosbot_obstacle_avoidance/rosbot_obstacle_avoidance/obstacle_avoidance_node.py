@@ -116,19 +116,19 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('backup_speed', 0.06)
 
         # Distances, metres
-        self.declare_parameter('clear_distance', 0.45)
-        self.declare_parameter('stop_distance', 0.30)
-        self.declare_parameter('hard_backup_distance', 0.14)
+        self.declare_parameter('clear_distance', 0.25)
+        self.declare_parameter('stop_distance', 0.25)
+        self.declare_parameter('hard_backup_distance', 0.10)
         self.declare_parameter('low_obstacle_distance', 0.30)
         self.declare_parameter('low_obstacle_backup_distance', 0.20)
         self.declare_parameter('low_obstacle_min_points', 8)
         self.declare_parameter('low_obstacle_hold_sec', 0.70)
-        self.declare_parameter('front_tof_obstacle_distance', 0.35)
-        self.declare_parameter('front_tof_hard_distance', 0.15)
+        self.declare_parameter('front_tof_obstacle_distance', 0.25)
+        self.declare_parameter('front_tof_hard_distance', 0.12)
         self.declare_parameter('pre_dodge_backup_enabled', False)
         self.declare_parameter('pre_dodge_backup_sec', 0.40)
         self.declare_parameter('pre_dodge_backup_clear_bonus_sec', 0.80)
-        self.declare_parameter('dodge_clearance', 0.08)
+        self.declare_parameter('dodge_clearance', 0.45)
         self.declare_parameter('rear_stop_distance', 0.20)
         self.declare_parameter('side_guard_distance', 0.08)
         self.declare_parameter('side_escape_distance', 0.08)
@@ -140,13 +140,13 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('side_escape_max_attempts', 4)
         self.declare_parameter('edge_escape_enabled', True)
         self.declare_parameter('edge_escape_front_distance', 0.30)
-        self.declare_parameter('edge_escape_clearance', 0.30)
+        self.declare_parameter('edge_escape_clearance', 0.45)
         self.declare_parameter('edge_escape_angular_speed', 0.30)
         self.declare_parameter('edge_escape_sec', 0.80)
         self.declare_parameter('edge_escape_max_attempts', 3)
-        self.declare_parameter('corner_backup_side_distance', 0.10)
-        self.declare_parameter('corner_backup_front_distance', 0.45)
-        self.declare_parameter('corner_backup_both_sides_distance', 0.08)
+        self.declare_parameter('corner_backup_side_distance', 0.45)
+        self.declare_parameter('corner_backup_front_distance', 0.25)
+        self.declare_parameter('corner_backup_both_sides_distance', 0.45)
         self.declare_parameter('dynamic_observe_distance', 1.00)
 
         # Timings / behaviour limits
@@ -390,8 +390,9 @@ class ObstacleAvoidanceNode(Node):
             'PROJECT C SAFETY NAV - ACTIVE SETTINGS',
             sep,
             f'front observe <= {_cm(self._clear)} | dodge <= {_cm(self._stop)} | hard backup <= {_cm(self._hard_backup)}',
+            f'side clearance target >= {_cm(self._dodge_clear)} | side scrape <= {_cm(self._side_guard)}',
             f'low obstacle <= {_cm(self._low_obstacle_distance)} | low backup <= {_cm(self._low_obstacle_backup)} | low min pts={self._low_obstacle_min_points} | hold={self._low_obstacle_hold_sec:.1f}s',
-            f'ToF emergency <= {_cm(self._front_tof_hard)} | side scrape <= {_cm(self._side_guard)} | rear stop <= {_cm(self._rear_stop)}',
+            f'ToF emergency <= {_cm(self._front_tof_hard)} | rear stop <= {_cm(self._rear_stop)}',
             f'recovery: backup {self._backup_sec:.2f}s, rotate commit {self._rotate_commit_sec:.2f}s',
             f'side escape: release >= {_cm(self._side_escape_release)}, S-turn {self._side_escape_sec:.2f}s',
             'log: state/reason | obstacle + 4-side distances | OAK low-view',
