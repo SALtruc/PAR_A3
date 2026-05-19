@@ -25,6 +25,7 @@ from rclpy.qos import (
     qos_profile_sensor_data,
 )
 from rclpy.time import Time
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image, LaserScan, PointCloud2, Range
 from std_msgs.msg import String
 
@@ -81,6 +82,7 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('depth_topic', '/oak/stereo/image_raw')
         self.declare_parameter('pointcloud_topic', '/oak/points')
+        self.declare_parameter('odom_topic', '/odom')
         self.declare_parameter('tof_topic', '/range')
         self.declare_parameter('tof_topics', '/range/fl,/range/fr,/range/rl,/range/rr')
         self.declare_parameter('tof_msg_type', 'scan')
@@ -158,6 +160,9 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_motion_near_m', 1.20)
         self.declare_parameter('depth_motion_min_ratio', 0.015)
         self.declare_parameter('depth_motion_confirm_frames', 2)
+        self.declare_parameter('depth_motion_ego_suppress_lin', 0.02)
+        self.declare_parameter('depth_motion_ego_suppress_ang', 0.10)
+        self.declare_parameter('depth_motion_odom_stale_sec', 0.5)
 
         # Low-region static depth check: catches close obstacles that appear
         # below the centre ROI (y > 0.5 in image = physically lower in scene).
@@ -171,6 +176,7 @@ class ObstaclePerceptionNode(Node):
         self._depth_topic = depth_topic
         pointcloud_topic = self.get_parameter('pointcloud_topic').value
         self._pointcloud_topic = pointcloud_topic
+        odom_topic = self.get_parameter('odom_topic').value
         tof_topic = self.get_parameter('tof_topic').value
         tof_topics = _split_topics(self.get_parameter('tof_topics').value)
         if not tof_topics:
@@ -389,6 +395,15 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_confirm_frames = max(
             1, int(self.get_parameter('depth_motion_confirm_frames').value)
         )
+        self._depth_motion_ego_lin = max(
+            0.0, float(self.get_parameter('depth_motion_ego_suppress_lin').value)
+        )
+        self._depth_motion_ego_ang = max(
+            0.0, float(self.get_parameter('depth_motion_ego_suppress_ang').value)
+        )
+        self._depth_motion_odom_stale = max(
+            0.05, float(self.get_parameter('depth_motion_odom_stale_sec').value)
+        )
         self._depth_low_enabled = _as_bool(
             self.get_parameter('depth_low_enabled').value
         )
@@ -414,6 +429,9 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_score = 0.0
         self._depth_motion_front = math.inf
         self._depth_motion_count = 0
+        self._odom_linear_x = 0.0
+        self._odom_angular_z = 0.0
+        self._last_odom_time: float | None = None
         self._pointcloud_front = math.inf
         self._pointcloud_low_front = math.inf
         self._pointcloud_low_front_count = 0
@@ -475,6 +493,15 @@ class ObstaclePerceptionNode(Node):
                     )
                 )
                 self._depth_subscription_labels.append(label)
+        if self._use_depth and self._depth_motion_enabled:
+            self._subscriptions.append(
+                self.create_subscription(
+                    Odometry,
+                    odom_topic,
+                    self._on_odom,
+                    qos_profile_sensor_data,
+                )
+            )
         if self._use_pointcloud:
             if point_cloud2 is None:
                 self.get_logger().warn(
@@ -522,6 +549,7 @@ class ObstaclePerceptionNode(Node):
             f'front_center={math.degrees(self._front_center_angle):.0f}deg, '
             f'depth_image={depth_topic if self._use_depth else "disabled"}, '
             f'depth_qos={self._depth_qos_label()}, '
+            f'odom={odom_topic if self._use_depth and self._depth_motion_enabled else "unused"}, '
             f'pointcloud={pointcloud_topic if self._use_pointcloud else "disabled"}, '
             f'pointcloud_qos={self._pointcloud_qos_label()}, '
             f'pointcloud_tf={self._pointcloud_target_frame if self._pointcloud_use_tf else "fallback"}, '
@@ -536,6 +564,11 @@ class ObstaclePerceptionNode(Node):
         if self._depth_qos == 'auto':
             return 'auto[' + ','.join(self._depth_subscription_labels) + ']'
         return self._depth_subscription_labels[0]
+
+    def _on_odom(self, msg: Odometry):
+        self._last_odom_time = time.monotonic()
+        self._odom_linear_x = float(msg.twist.twist.linear.x)
+        self._odom_angular_z = float(msg.twist.twist.angular.z)
 
     def _depth_qos_profiles(self) -> list[tuple[str, QoSProfile]]:
         if self._depth_qos in ('auto', ''):
@@ -859,6 +892,25 @@ class ObstaclePerceptionNode(Node):
             self._last_depth_warn = now
             self.get_logger().warn(text)
 
+    def _reset_depth_motion(self):
+        self._depth_motion = False
+        self._depth_motion_score = 0.0
+        self._depth_motion_front = math.inf
+        self._prev_depth_motion_roi = None
+        self._depth_motion_count = 0
+
+    def _depth_motion_ego_suppressed(self) -> bool:
+        if self._last_odom_time is None:
+            return False
+        if time.monotonic() - self._last_odom_time > self._depth_motion_odom_stale:
+            return False
+        linear = abs(self._odom_linear_x)
+        angular = abs(self._odom_angular_z)
+        return (
+            linear >= self._depth_motion_ego_lin
+            or angular >= self._depth_motion_ego_ang
+        )
+
     @staticmethod
     def _transform_point_axes(x: float, y: float, z: float, transform) -> tuple[float, float, float]:
         q = transform.rotation
@@ -920,11 +972,14 @@ class ObstaclePerceptionNode(Node):
 
     def _update_depth_motion(self, depth_img, encoding: str):
         if not self._depth_motion_enabled:
-            self._depth_motion = False
-            self._depth_motion_score = 0.0
-            self._depth_motion_front = math.inf
-            self._prev_depth_motion_roi = None
-            self._depth_motion_count = 0
+            self._reset_depth_motion()
+            return
+
+        # Consecutive-frame depth differencing detects real moving legs well
+        # while stopped, but ego motion makes the whole scene change. Suppress
+        # it whenever odom says the robot itself is translating or rotating.
+        if self._depth_motion_ego_suppressed():
+            self._reset_depth_motion()
             return
 
         roi, valid = self._depth_roi_values_m(
@@ -936,11 +991,7 @@ class ObstaclePerceptionNode(Node):
             height_fraction=self._depth_motion_height_fraction,
         )
         if valid.size == 0:
-            self._depth_motion = False
-            self._depth_motion_score = 0.0
-            self._depth_motion_front = math.inf
-            self._prev_depth_motion_roi = None
-            self._depth_motion_count = 0
+            self._reset_depth_motion()
             return
 
         near_front = float(np.percentile(valid, 10))
@@ -1101,7 +1152,10 @@ class ObstaclePerceptionNode(Node):
         # Do NOT let pointcloud_front or depth_motion pull the main front distance down.
         # Pointcloud is kept for low-object support, and depth_motion is only a dynamic hint.
         depth_front = depth_image_front
-        depth_motion_active = bool(depth_image_recent and self._depth_motion)
+        depth_motion_suppressed = self._depth_motion_ego_suppressed()
+        depth_motion_active = bool(
+            depth_image_recent and self._depth_motion and not depth_motion_suppressed
+        )
 
         # Advisory-only OAK low-object classification.
         # LIDAR stays the main navigation sensor, but OAK may announce
@@ -1140,8 +1194,15 @@ class ObstaclePerceptionNode(Node):
         )
         if not math.isfinite(front_distance) and math.isfinite(depth_front):
             front_distance = depth_front
-        left_distance = _min_finite(lidar_left, depth_left)
-        right_distance = _min_finite(lidar_right, depth_right)
+        # LIDAR side sectors are true body clearances. OAK side/depth values
+        # are camera ranges in a side ROI, so using their minimum as side
+        # clearance can create false 5-10 cm wall readings while driving.
+        left_distance = (
+            lidar_left if scan_recent and math.isfinite(lidar_left) else depth_left
+        )
+        right_distance = (
+            lidar_right if scan_recent and math.isfinite(lidar_right) else depth_right
+        )
         rear_distance = _min_finite(lidar_rear, rear_tof_range)
 
         front_close_ratio = (
@@ -1293,6 +1354,9 @@ class ObstaclePerceptionNode(Node):
                 'pointcloud_left_min': _json_float(pointcloud_left),
                 'pointcloud_right_min': _json_float(pointcloud_right),
                 'motion': bool(depth_motion_active),
+                'motion_ego_suppressed': bool(depth_motion_suppressed),
+                'motion_odom_linear_x': _json_float(self._odom_linear_x),
+                'motion_odom_angular_z': _json_float(self._odom_angular_z),
                 'motion_score': _json_float(self._depth_motion_score),
                 'motion_front_min': _json_float(self._depth_motion_front),
             },

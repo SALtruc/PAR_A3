@@ -71,8 +71,8 @@ def generate_launch_description():
         DeclareLaunchArgument('imu_topic', default_value='/imu'),
         DeclareLaunchArgument('front_tof_topics', default_value='/range/fl,/range/fr'),
         DeclareLaunchArgument('log_dir', default_value='~/rosbot_obstacle_logs'),
-        DeclareLaunchArgument('max_speed', default_value='0.20'),
-        DeclareLaunchArgument('emergency_distance', default_value='0.10'),
+        DeclareLaunchArgument('max_speed', default_value='0.18'),
+        DeclareLaunchArgument('emergency_distance', default_value='0.15'),
         DeclareLaunchArgument('perception_obstacle_distance', default_value='0.45'),
         DeclareLaunchArgument('perception_clear_distance', default_value='0.45'),
         DeclareLaunchArgument('clear_distance', default_value='0.45'),
@@ -170,7 +170,8 @@ def generate_launch_description():
         DeclareLaunchArgument('depth_motion_min_ratio', default_value='0.05'),
         DeclareLaunchArgument('depth_motion_confirm_frames', default_value='4'),
         DeclareLaunchArgument('depth_motion_ego_suppress_ang', default_value='0.10'),
-        DeclareLaunchArgument('depth_motion_ego_suppress_lin', default_value='-0.005'),
+        DeclareLaunchArgument('depth_motion_ego_suppress_lin', default_value='0.02'),
+        DeclareLaunchArgument('depth_motion_odom_stale_sec', default_value='0.5'),
     ]
 
     obstacle_perception = Node(
@@ -183,6 +184,7 @@ def generate_launch_description():
                 'scan_topic': LaunchConfiguration('scan_topic'),
                 'depth_topic': LaunchConfiguration('depth_topic'),
                 'pointcloud_topic': LaunchConfiguration('pointcloud_topic'),
+                'odom_topic': LaunchConfiguration('odom_topic'),
                 'pointcloud_frame': LaunchConfiguration('pointcloud_frame'),
                 'pointcloud_target_frame': LaunchConfiguration('pointcloud_target_frame'),
                 'pointcloud_use_tf': as_bool('pointcloud_use_tf'),
@@ -230,6 +232,7 @@ def generate_launch_description():
                 'clear_confirm_sec': as_float('clear_confirm_sec'),
                 'depth_motion_ego_suppress_ang': as_float('depth_motion_ego_suppress_ang'),
                 'depth_motion_ego_suppress_lin': as_float('depth_motion_ego_suppress_lin'),
+                'depth_motion_odom_stale_sec': as_float('depth_motion_odom_stale_sec'),
             },
         ],
         output='screen',
