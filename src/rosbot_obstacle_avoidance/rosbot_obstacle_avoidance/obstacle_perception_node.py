@@ -1102,6 +1102,33 @@ class ObstaclePerceptionNode(Node):
         # Pointcloud is kept for low-object support, and depth_motion is only a dynamic hint.
         depth_front = depth_image_front
         depth_motion_active = bool(depth_image_recent and self._depth_motion)
+
+        # Advisory-only OAK low-object classification.
+        # LIDAR stays the main navigation sensor, but OAK may announce
+        # low obstacles that are below/near the LIDAR scan plane.
+        image_low_object = (
+            depth_image_recent
+            and math.isfinite(depth_low_front)
+            and depth_low_front <= self._depth_obstacle_distance
+        )
+        pointcloud_low_object = (
+            pointcloud_recent
+            and math.isfinite(pointcloud_low_front)
+            and pointcloud_low_front_count >= self._pointcloud_low_min_points
+            and pointcloud_low_front <= self._depth_obstacle_distance
+        )
+        low_object = bool(image_low_object or pointcloud_low_object)
+        low_object_distance = _min_finite(
+            depth_low_front if image_low_object else math.inf,
+            pointcloud_low_front if pointcloud_low_object else math.inf,
+        )
+        low_object_source = []
+        if image_low_object:
+            low_object_source.append('depth_low')
+        if pointcloud_low_object:
+            low_object_source.append('pointcloud_low')
+        height_class = 'low' if low_object else 'normal_or_unknown'
+
         depth_left = _min_finite(depth_image_left, pointcloud_left)
         depth_right = _min_finite(depth_image_right, pointcloud_right)
 
@@ -1189,11 +1216,18 @@ class ObstaclePerceptionNode(Node):
         if blocked_lidar or lidar_emergency or (
                 blocked and not raw_blocked_sources and 'lidar' in self._blocked_sources):
             sources.append('lidar')
-        if blocked_depth or depth_emergency or depth_motion_active or (
+        if blocked_depth or depth_emergency or depth_motion_active or image_low_object or (
                 blocked and not raw_blocked_sources and 'depth' in self._blocked_sources):
             sources.append('depth')
+        if pointcloud_low_object:
+            sources.append('pointcloud')
         if blocked_tof or tof_emergency:
             sources.append('tof')
+
+        # "announced_by" is a debugging/explanation field. It tells which
+        # sensor family claimed obstacle evidence, without making all of them
+        # equal control authorities.
+        announced_by = list(dict.fromkeys(sources))
 
         rep = {
             'stamp': wall_stamp,
@@ -1244,6 +1278,12 @@ class ObstaclePerceptionNode(Node):
                 'pointcloud_low_front_count': int(pointcloud_low_front_count),
                 'pointcloud_sample_count': int(pointcloud_sample_count),
                 'pointcloud_low_fallback_count': int(pointcloud_low_fallback_count),
+                'image_low_object': bool(image_low_object),
+                'pointcloud_low_object': bool(pointcloud_low_object),
+                'low_object': bool(low_object),
+                'low_object_distance': _json_float(low_object_distance),
+                'low_object_source': low_object_source,
+                'object_height_class': height_class,
                 'pointcloud_low_height_min': _json_float(
                     self._pointcloud_low_min_height_m
                 ),
@@ -1283,6 +1323,11 @@ class ObstaclePerceptionNode(Node):
                 'depth_motion': bool(depth_motion_active),
                 'closing_speed_mps': _json_float(closing_speed),
                 'source': sources,
+                'announced_by': announced_by,
+                'height_class': height_class,
+                'low_object': bool(low_object),
+                'low_object_distance': _json_float(low_object_distance),
+                'low_object_source': low_object_source,
                 'best_gap_angle': _json_float(best_gap.angle if best_gap else math.inf),
                 'best_gap_clearance': _json_float(
                     best_gap.clearance if best_gap else math.inf
