@@ -3,11 +3,22 @@ set -e
 
 cd ~/PAR_A3
 
+unset AMENT_PREFIX_PATH
+unset COLCON_PREFIX_PATH
+unset CMAKE_PREFIX_PATH
+unset PYTHONPATH
+
 source /opt/ros/jazzy/setup.bash
-source ~/PAR_A3/install/setup.bash
+source ~/PAR_A3/install/local_setup.bash
 
 echo "[check] Package prefix:"
-ros2 pkg prefix rosbot_obstacle_avoidance
+PREFIX="$(ros2 pkg prefix rosbot_obstacle_avoidance)"
+echo "$PREFIX"
+
+if [[ "$PREFIX" != "/home/husarion/PAR_A3/install/rosbot_obstacle_avoidance" ]]; then
+  echo "[ERROR] Wrong package prefix. Expected PAR_A3 install, got: $PREFIX"
+  exit 1
+fi
 
 DEPTH_TOPIC=${DEPTH_TOPIC:-/camera/camera/depth/image_rect_raw}
 POINTCLOUD_TOPIC=${POINTCLOUD_TOPIC:-/camera/camera/depth/color/points}
