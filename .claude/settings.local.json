@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import paramiko; print\\('paramiko ok', paramiko.__version__\\)\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Temp\\\\check_robot.py\" 2>&1)",
+      "Bash(\"C:/Users/PC/AppData/Local/Programs/Python/Python313/python.exe\" \"C:/Users/PC/AppData/Local/Temp/check_robot6.py\")"
+    ]
+  }
+}

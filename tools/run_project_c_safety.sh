@@ -94,9 +94,10 @@ if [ "${PROJECT_C_LOCAL_ONLY,,}" = "true" ] || [ "${PROJECT_C_LOCAL_ONLY}" = "1"
   echo "[ok] ROS discovery is restricted to localhost"
 fi
 
-# OAK-D v3 topics (rs_compat driver). Override with env vars if needed.
-DEPTH_TOPIC_ARG="${DEPTH_TOPIC:-/camera/camera/depth/image_rect_raw}"
-POINTCLOUD_TOPIC_ARG="${POINTCLOUD_TOPIC:-/camera/camera/depth/color/points}"
+# OAK-D topics as published by the depthai-ros snap on this robot.
+# Override with DEPTH_TOPIC= or POINTCLOUD_TOPIC= env vars if needed.
+DEPTH_TOPIC_ARG="${DEPTH_TOPIC:-/oak/stereo/image_raw}"
+POINTCLOUD_TOPIC_ARG="${POINTCLOUD_TOPIC:-/oak/points}"
 USE_DEPTH_ARG="${USE_DEPTH:-auto}"
 USE_POINTCLOUD_ARG="${USE_POINTCLOUD:-auto}"
 
@@ -308,11 +309,15 @@ echo "[ok] USE_POINTCLOUD=$USE_POINTCLOUD_ARG"
 echo "[ok] MAX_SPEED=${MAX_SPEED:-0.20}"
 echo "[ok] CLEAR_DISTANCE=${CLEAR_DISTANCE:-0.45}"
 echo "[ok] STOP_DISTANCE=${STOP_DISTANCE:-0.25}"
-echo "[ok] DODGE_CLEARANCE=${DODGE_CLEARANCE:-0.45}"
+echo "[ok] DODGE_CLEARANCE=${DODGE_CLEARANCE:-0.20}"
 echo "[ok] LOW_OBSTACLE_DISTANCE=${LOW_OBSTACLE_DISTANCE:-0.30}"
 echo "[ok] LOW_OBSTACLE_BACKUP_DISTANCE=${LOW_OBSTACLE_BACKUP_DISTANCE:-0.20}"
 echo "[ok] LOW_OBSTACLE_HOLD_SEC=${LOW_OBSTACLE_HOLD_SEC:-0.70}"
 echo "[ok] SIDE_GUARD_DISTANCE=${SIDE_GUARD_DISTANCE:-0.08}"
+echo "[ok] BACKUP_SPEED=${BACKUP_SPEED:-0.08}"
+echo "[ok] BACKUP_SEC=${BACKUP_SEC:-1.60}"
+echo "[ok] CORNER_BACKUP_SIDE=${CORNER_BACKUP_SIDE_DISTANCE:-0.10}"
+echo "[ok] ROTATION_ANGULAR_SPEED=${ROTATION_ANGULAR_SPEED:-0.60}"
 echo "[ok] DEPTH_QOS=${DEPTH_QOS:-auto}"
 echo "[ok] POINTCLOUD_USE_TF=${POINTCLOUD_USE_TF:-false}"
 
@@ -342,8 +347,8 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   clear_distance:="${CLEAR_DISTANCE:-0.45}" \
   stop_distance:="${STOP_DISTANCE:-0.25}" \
   hard_backup_distance:="${HARD_BACKUP_DISTANCE:-0.10}" \
-  backup_speed:="${BACKUP_SPEED:-0.06}" \
-  backup_sec:="${BACKUP_SEC:-1.00}" \
+  backup_speed:="${BACKUP_SPEED:-0.08}" \
+  backup_sec:="${BACKUP_SEC:-1.60}" \
   low_obstacle_distance:="${LOW_OBSTACLE_DISTANCE:-0.30}" \
   low_obstacle_backup_distance:="${LOW_OBSTACLE_BACKUP_DISTANCE:-0.20}" \
   pre_dodge_backup_enabled:="${PRE_DODGE_BACKUP_ENABLED:-true}" \
@@ -353,7 +358,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   low_obstacle_hold_sec:="${LOW_OBSTACLE_HOLD_SEC:-0.70}" \
   front_tof_obstacle_distance:="${FRONT_TOF_OBSTACLE_DISTANCE:-0.25}" \
   front_tof_hard_distance:="${FRONT_TOF_HARD_DISTANCE:-0.12}" \
-  dodge_clearance:="${DODGE_CLEARANCE:-0.45}" \
+  dodge_clearance:="${DODGE_CLEARANCE:-0.20}" \
   side_guard_distance:="${SIDE_GUARD_DISTANCE:-0.08}" \
   side_escape_distance:="${SIDE_ESCAPE_DISTANCE:-0.08}" \
   side_escape_release_distance:="${SIDE_ESCAPE_RELEASE_DISTANCE:-0.14}" \
@@ -363,9 +368,17 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   side_escape_max_attempts:="${SIDE_ESCAPE_MAX_ATTEMPTS:-4}" \
   edge_escape_front_distance:="${EDGE_ESCAPE_FRONT_DISTANCE:-0.30}" \
   edge_escape_clearance:="${EDGE_ESCAPE_CLEARANCE:-0.45}" \
-  corner_backup_side_distance:="${CORNER_BACKUP_SIDE_DISTANCE:-0.45}" \
-  corner_backup_front_distance:="${CORNER_BACKUP_FRONT_DISTANCE:-0.45}" \
-  corner_backup_both_sides_distance:="${CORNER_BACKUP_BOTH_SIDES_DISTANCE:-0.45}" \
+  corner_backup_side_distance:="${CORNER_BACKUP_SIDE_DISTANCE:-0.10}" \
+  corner_backup_front_distance:="${CORNER_BACKUP_FRONT_DISTANCE:-0.35}" \
+  corner_backup_both_sides_distance:="${CORNER_BACKUP_BOTH_SIDES_DISTANCE:-0.14}" \
   corner_backup_sec:="${CORNER_BACKUP_SEC:-1.40}" \
+  rotation_angular_speed:="${ROTATION_ANGULAR_SPEED:-0.60}" \
+  rotation_step_deg:="${ROTATION_STEP_DEG:-95.0}" \
+  rotation_commit_sec:="${ROTATION_COMMIT_SEC:-0.65}" \
+  dodge_forward_speed:="${DODGE_FORWARD_SPEED:-0.045}" \
+  dodge_angular_speed:="${DODGE_ANGULAR_SPEED:-0.55}" \
+  dynamic_observe_distance:="${DYNAMIC_OBSERVE_DISTANCE:-0.80}" \
+  dynamic_timeout_sec:="${DYNAMIC_TIMEOUT_SEC:-1.5}" \
+  observe_frames:="${OBSERVE_FRAMES:-3}" \
   require_battery_ok:="${REQUIRE_BATTERY_OK:-false}" \
   "$@"

@@ -1143,10 +1143,8 @@ class ObstaclePerceptionNode(Node):
         pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
         pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
         depth_low_front = self._depth_low_front if depth_image_recent else math.inf
-        depth_front = _min_finite(depth_image_front, pointcloud_front)
+        depth_front = depth_image_front
         depth_motion_active = bool(depth_image_recent and self._depth_motion)
-        if depth_motion_active:
-            depth_front = _min_finite(depth_front, self._depth_motion_front)
         depth_left = _min_finite(depth_image_left, pointcloud_left)
         depth_right = _min_finite(depth_image_right, pointcloud_right)
 

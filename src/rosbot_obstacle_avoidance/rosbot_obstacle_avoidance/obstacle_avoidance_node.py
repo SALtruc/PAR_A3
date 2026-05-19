@@ -811,10 +811,14 @@ class ObstacleAvoidanceNode(Node):
             self._start_corner_backup()
             return True
 
-        # Obstacle confirmed after observe_frames. Dodge immediately toward the
-        # clearer side — creeping forward only delays the maneuver and risks
-        # rolling over a low object before LIDAR detects it.
-        # At this point front <= clear_distance is guaranteed by the clear-exit above.
+        # Obstacle confirmed after observe_frames. Creep slowly toward stop_distance
+        # so transient noise has time to clear; the clear-exit above will return to
+        # DRIVE if the obstacle disappears. Only dodge once front <= stop_distance.
+        if front > self._stop:
+            twist.linear.x = self._creep_speed
+            twist.angular.z = 0.0
+            return True
+
         self._static_confirmed = False
         if self._pre_dodge_backup and self._pre_dodge_backup_sec > 0.0:
             self._start_backup(self._pre_dodge_backup_dur(snap), then_dodge=True)
@@ -841,51 +845,25 @@ class ObstacleAvoidanceNode(Node):
         self._set_state(DODGE, self._dodge_sec)
 
     def _handle_dodge(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
-        if self._corner_backup_needed(snap, front):
-            self._start_corner_backup()
-            return self._handle_backup(twist, snap, now)
-
-        if self._surprise_backup_needed(snap, front, now):
-            self._start_backup(self._surprise_backup_sec, then_observe=True)
-            self._last_surprise_backup = now
-            return self._handle_backup(twist, snap, now)
-
-        if self._too_close(snap):
-            self._start_backup()
-            return self._handle_backup(twist, snap, now)
-
-        # Low object (below LIDAR plane) detected by OAK during the arc: abort
-        # and back up so the robot doesn't ride over it.
-        if self._low_obstacle_hit(snap):
-            self._start_backup()
-            return self._handle_backup(twist, snap, now)
-
-        if self._edge_escape_needed(snap, front):
-            self._start_edge_escape(snap)
-            return self._handle_edge_escape(twist, snap, now)
-
         elapsed = max(0.0, now - self._state_start)
+
+        # Only real hard safety can interrupt DODGE.
+        if self._too_close(snap) or snap.tof_emergency:
+            self._start_backup()
+            return self._handle_backup(twist, snap, now)
+
+        # Commit pivot first.
         if elapsed < self._dodge_pivot_sec:
-            # Pure pivot: turn in place. Do NOT exit early — a partial rotation
-            # moves the obstacle out of the LIDAR front sector producing a
-            # false-clear reading that would cause the robot to drive straight
-            # into the obstacle.
             twist.linear.x = 0.0
             twist.angular.z = self._turn_dir * self._dodge_ang
             return True
 
+        # Commit arc.
         if now < self._state_end:
-            # Arc phase: forward + angular. Commit to the full arc.
-            # Do NOT exit early on a front-clear reading — the obstacle just
-            # rotated out of the scan sector; it is still physically there.
             twist.linear.x = self._dodge_forward
             twist.angular.z = self._turn_dir * self._dodge_ang
             return True
 
-        # Full arc completed. Re-enter OBSERVE to verify the new heading
-        # before resuming straight drive. If the obstacle is still detectable
-        # from the new heading, OBSERVE will initiate another dodge step —
-        # the robot keeps arcing until the obstacle is fully cleared.
         self._start_observe()
         twist.linear.x = 0.0
         twist.angular.z = 0.0
@@ -1059,8 +1037,11 @@ class ObstacleAvoidanceNode(Node):
     def _handle_rotate(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
         elapsed = max(0.0, now - self._state_start)
 
-        # Only hard safety (critically close front) can abort rotation early.
-        if self._too_close(snap):
+        # Hard safety: abort rotation only when front is critically close AND
+        # the rear is clear enough to actually back up. If rear is also blocked,
+        # backup exits immediately and causes ROTATE→BACKUP→ROTATE — keep rotating.
+        rear_blocked = math.isfinite(snap.rear) and snap.rear < self._rear_stop
+        if self._too_close(snap) and not rear_blocked:
             self._start_backup()
             return self._handle_backup(twist, snap, now)
 
