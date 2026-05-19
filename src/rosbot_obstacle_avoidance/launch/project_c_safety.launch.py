@@ -127,7 +127,7 @@ def generate_launch_description():
         DeclareLaunchArgument('surprise_backup_distance', default_value='0.20'),
         DeclareLaunchArgument('surprise_backup_sec', default_value='0.45'),
         DeclareLaunchArgument('surprise_backup_cooldown_sec', default_value='1.20'),
-        DeclareLaunchArgument('dynamic_observe_distance', default_value='0.70'),
+        DeclareLaunchArgument('dynamic_observe_distance', default_value='0.80'),
         DeclareLaunchArgument('dynamic_timeout_sec', default_value='1.5'),
         DeclareLaunchArgument('depth_obstacle_distance', default_value='0.35'),
         DeclareLaunchArgument('front_center_angle_deg', default_value='180.0'),

@@ -622,6 +622,16 @@ class ObstacleAvoidanceNode(Node):
             self._publish_cmd(twist)
             return
 
+        # Priority 0.5: dynamic obstacle within observe range → assess in OBSERVE
+        # before any mechanical maneuver (corner backup, edge escape, etc.).
+        # If already inside stop_distance, let static priorities handle it.
+        if snap.dynamic and math.isfinite(front) and self._stop < front <= self._dynamic_observe:
+            self._start_observe()
+            self._handle_observe(twist, snap, front)
+            self._log('observe_start', snap)
+            self._publish_cmd(twist)
+            return
+
         # Priority 1: corner pinch. A side scrape plus a close front object
         # should back out before pivoting, otherwise the robot can swing into
         # table legs / wall corners.
@@ -708,7 +718,9 @@ class ObstacleAvoidanceNode(Node):
         self._observe_count += 1
         now = time.monotonic()
 
-        if self._corner_backup_needed(snap, front):
+        # Corner backup only for static obstacles. For dynamic ones, let the
+        # dynamic wait block below decide — then dodge toward the clear side.
+        if not snap.dynamic and self._corner_backup_needed(snap, front):
             self._static_confirmed = False
             self._start_corner_backup()
             return self._handle_backup(twist, snap, now)
