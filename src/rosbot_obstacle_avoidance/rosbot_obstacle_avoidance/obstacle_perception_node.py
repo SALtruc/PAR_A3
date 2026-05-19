@@ -25,6 +25,7 @@ from rclpy.qos import (
     qos_profile_sensor_data,
 )
 from rclpy.time import Time
+from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Image, LaserScan, PointCloud2, Range
 from std_msgs.msg import String
 
@@ -158,6 +159,11 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_motion_near_m', 1.20)
         self.declare_parameter('depth_motion_min_ratio', 0.015)
         self.declare_parameter('depth_motion_confirm_frames', 2)
+        # Suppress depth_motion when the robot itself is rotating or backing up.
+        # Any |angular.z| above this (rad/s) counts as "robot rotating".
+        self.declare_parameter('depth_motion_ego_suppress_ang', 0.10)
+        # Any linear.x below this (m/s, negative = backward) counts as backing.
+        self.declare_parameter('depth_motion_ego_suppress_lin', -0.005)
 
         # Low-region static depth check: catches close obstacles that appear
         # below the centre ROI (y > 0.5 in image = physically lower in scene).
@@ -389,6 +395,12 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_confirm_frames = max(
             1, int(self.get_parameter('depth_motion_confirm_frames').value)
         )
+        self._depth_motion_ego_suppress_ang = float(
+            self.get_parameter('depth_motion_ego_suppress_ang').value
+        )
+        self._depth_motion_ego_suppress_lin = float(
+            self.get_parameter('depth_motion_ego_suppress_lin').value
+        )
         self._depth_low_enabled = _as_bool(
             self.get_parameter('depth_low_enabled').value
         )
@@ -414,6 +426,8 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_score = 0.0
         self._depth_motion_front = math.inf
         self._depth_motion_count = 0
+        self._cmd_vel_lin_x: float = 0.0
+        self._cmd_vel_ang_z: float = 0.0
         self._pointcloud_front = math.inf
         self._pointcloud_low_front = math.inf
         self._pointcloud_low_front_count = 0
@@ -512,6 +526,15 @@ class ObstaclePerceptionNode(Node):
                         qos_profile_sensor_data,
                     )
                 )
+
+        self._subscriptions.append(
+            self.create_subscription(
+                Twist,
+                '/cmd_vel',
+                self._on_cmd_vel,
+                10,
+            )
+        )
 
         self._pub = self.create_publisher(String, obstacle_topic, 10)
         self.create_timer(1.0 / max(publish_hz, 1.0), self._publish_representation)
@@ -918,12 +941,29 @@ class ObstaclePerceptionNode(Node):
         valid = arr[np.isfinite(arr) & (arr > 0.02)]
         return arr, valid
 
+    def _on_cmd_vel(self, msg: Twist):
+        self._cmd_vel_lin_x = msg.linear.x
+        self._cmd_vel_ang_z = msg.angular.z
+
     def _update_depth_motion(self, depth_img, encoding: str):
         if not self._depth_motion_enabled:
             self._depth_motion = False
             self._depth_motion_score = 0.0
             self._depth_motion_front = math.inf
             self._prev_depth_motion_roi = None
+            self._depth_motion_count = 0
+            return
+
+        # When the robot itself is rotating or backing up the depth camera
+        # sweeps across new scene content — every pixel looks "moved".  Reset
+        # the reference frame so we only compare frames from when the robot is
+        # stationary or moving slowly forward.
+        robot_rotating = abs(self._cmd_vel_ang_z) > self._depth_motion_ego_suppress_ang
+        robot_backing = self._cmd_vel_lin_x < self._depth_motion_ego_suppress_lin
+        if robot_rotating or robot_backing:
+            self._prev_depth_motion_roi = None
+            self._depth_motion = False
+            self._depth_motion_score = 0.0
             self._depth_motion_count = 0
             return
 
@@ -1354,6 +1394,15 @@ class ObstaclePerceptionNode(Node):
             if self._filtered_front_distance is None:
                 self._filtered_front_distance = front_distance
             else:
+                # If front_distance jumps by more than 30 cm in one tick it
+                # almost certainly means the robot just rotated to a new heading
+                # (or a large sensor artefact), not a genuine closing obstacle.
+                # Reset the filter and history so the next tick starts fresh.
+                if abs(front_distance - self._filtered_front_distance) > 0.30:
+                    self._filtered_front_distance = front_distance
+                    self._prev_front_sample = None
+                    self._dynamic_first_seen_time = None
+                    return False, 0.0
                 alpha = max(0.0, min(1.0, self._front_filter_alpha))
                 self._filtered_front_distance = (
                     alpha * front_distance
