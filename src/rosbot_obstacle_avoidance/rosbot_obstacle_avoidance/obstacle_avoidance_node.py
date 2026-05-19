@@ -115,7 +115,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('control_hz', 20.0)
 
         # Motion
-        self.declare_parameter('max_speed', 0.20)
+        self.declare_parameter('max_speed', 0.18)
         self.declare_parameter('observe_speed', 0.0)
         self.declare_parameter('dodge_forward_speed', 0.035)
         self.declare_parameter('dodge_angular_speed', 0.30)
@@ -125,13 +125,13 @@ class ObstacleAvoidanceNode(Node):
         # Distances, metres
         self.declare_parameter('clear_distance', 0.45)
         self.declare_parameter('stop_distance', 0.25)
-        self.declare_parameter('hard_backup_distance', 0.10)
-        self.declare_parameter('low_obstacle_distance', 0.30)
-        self.declare_parameter('low_obstacle_backup_distance', 0.20)
+        self.declare_parameter('hard_backup_distance', 0.14)
+        self.declare_parameter('low_obstacle_distance', 0.35)
+        self.declare_parameter('low_obstacle_backup_distance', 0.28)
         self.declare_parameter('low_obstacle_min_points', 8)
         self.declare_parameter('low_obstacle_hold_sec', 0.70)
-        self.declare_parameter('front_tof_obstacle_distance', 0.25)
-        self.declare_parameter('front_tof_hard_distance', 0.12)
+        self.declare_parameter('front_tof_obstacle_distance', 0.35)
+        self.declare_parameter('front_tof_hard_distance', 0.18)
         self.declare_parameter('pre_dodge_backup_enabled', False)
         self.declare_parameter('pre_dodge_backup_sec', 0.40)
         self.declare_parameter('pre_dodge_backup_clear_bonus_sec', 0.80)
@@ -154,8 +154,8 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('corner_backup_side_distance', 0.45)
         self.declare_parameter('corner_backup_front_distance', 0.45)
         self.declare_parameter('corner_backup_both_sides_distance', 0.45)
-        self.declare_parameter('corner_backup_sec', 1.40)
-        self.declare_parameter('dynamic_observe_distance', 1.00)
+        self.declare_parameter('corner_backup_sec', 1.00)
+        self.declare_parameter('dynamic_observe_distance', 1.20)
 
         # Timings / behaviour limits
         self.declare_parameter('observe_frames', 8)
@@ -173,7 +173,7 @@ class ObstacleAvoidanceNode(Node):
 
         # Static approach + dynamic timeout
         self.declare_parameter('creep_speed', 0.030)
-        self.declare_parameter('dynamic_timeout_sec', 5.0)
+        self.declare_parameter('dynamic_timeout_sec', 1.0)
         self.declare_parameter('dynamic_close_distance', 0.20)
         self.declare_parameter('surprise_backup_enabled', False)
         self.declare_parameter('surprise_backup_distance', 0.20)
@@ -590,7 +590,7 @@ class ObstacleAvoidanceNode(Node):
             return
 
         if self._tilt_backup(now) and self._state not in (BACKUP, STOPPED):
-            self._start_backup()
+            self._start_backup(duration=0.45, then_observe=True)
             self._handle_backup(twist, snap, now)
             self._log('tilt_backup', snap)
             self._publish_cmd(twist)
@@ -609,9 +609,7 @@ class ObstacleAvoidanceNode(Node):
             and snap.front_tof <= self._front_tof_hard
         )
         if front_tof_hard and self._state not in (BACKUP, ROTATE):
-            self._start_backup()
-            self._handle_backup(twist, snap, now)
-            self._log('tof_emergency_backup', snap)
+            self._handle_front_emergency(twist, snap, now, 'tof_emergency')
             self._publish_cmd(twist)
             return
 
@@ -693,7 +691,7 @@ class ObstacleAvoidanceNode(Node):
 
         # Priority 4: too close = backup, not dodge.
         if self._too_close(snap):
-            self._start_backup()
+            self._start_backup(duration=0.45, then_observe=True)
             self._handle_backup(twist, snap, now)
             self._log('too_close_backup', snap)
             self._publish_cmd(twist)
@@ -756,7 +754,7 @@ class ObstacleAvoidanceNode(Node):
 
         if self._too_close(snap):
             self._static_confirmed = False
-            self._start_backup()
+            self._start_backup(duration=0.45, then_observe=True)
             return self._handle_backup(twist, snap, now)
 
         if self._corner_backup_needed(snap, front):
@@ -799,6 +797,15 @@ class ObstacleAvoidanceNode(Node):
 
         self._front_clear_count = 0
 
+        dynamic_near = self._dynamic_observe_hit(snap, front)
+        if dynamic_near and self._dynamic_first_seen is not None:
+            elapsed = now - self._dynamic_first_seen
+            if front > self._stop and elapsed < self._dynamic_timeout:
+                self._log('dynamic_wait', snap)
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+                return True
+
         # LIDAR suspicious but depth clearly open → short observe then drive.
         if self._depth_confirms_clear(snap) and self._observe_count >= self._clear_observe_frames:
             self._static_confirmed = False
@@ -816,7 +823,7 @@ class ObstacleAvoidanceNode(Node):
 
         # Dynamic object handling: hold position and wait up to dynamic_timeout_sec.
         # If the dynamic flag clears (person moved away), the top check exits first.
-        if snap.dynamic and self._dynamic_first_seen is not None:
+        if dynamic_near and self._dynamic_first_seen is not None:
             elapsed = now - self._dynamic_first_seen
             if front > self._stop and elapsed < self._dynamic_timeout:
                 # Dynamic object still near but not dangerously close: hold still.
@@ -824,7 +831,7 @@ class ObstacleAvoidanceNode(Node):
                 twist.linear.x = 0.0
                 twist.angular.z = 0.0
                 return True
-            # Dynamic timed out (>5s) OR entered stop zone → treat as static blocker.
+            # Dynamic timed out OR entered stop zone → treat as static blocker.
 
         # Static confirmed (or dynamic timed out/too close).
         # Dead-end check first.
@@ -899,7 +906,7 @@ class ObstacleAvoidanceNode(Node):
         if self._tof_near_obstacle(snap):
             return self._handle_front_emergency(twist, snap, now, 'tof_front_obstacle')
         if self._too_close(snap) or snap.tof_emergency:
-            self._start_backup()
+            self._start_backup(duration=0.45, then_observe=True)
             return self._handle_backup(twist, snap, now)
 
         # Commit pivot first.
@@ -951,7 +958,7 @@ class ObstacleAvoidanceNode(Node):
             return self._handle_backup(twist, snap, now)
 
         if self._too_close(snap):
-            self._start_backup()
+            self._start_backup(duration=0.45, then_observe=True)
             return self._handle_backup(twist, snap, now)
 
         if self._edge_escape_needed(snap, front):
@@ -1092,7 +1099,7 @@ class ObstacleAvoidanceNode(Node):
         if self._tof_near_obstacle(snap):
             return self._handle_front_emergency(twist, snap, now, 'tof_front_obstacle')
         if self._too_close(snap) or snap.tof_emergency:
-            self._start_backup()
+            self._start_backup(duration=0.45, then_observe=True)
             return self._handle_backup(twist, snap, now)
 
         # Commit rotation before soft corner/edge checks.
@@ -1120,7 +1127,7 @@ class ObstacleAvoidanceNode(Node):
 
         self._rotation_count += 1
         if self._rotation_count >= self._max_rotations:
-            self._start_backup()
+            self._start_backup(duration=0.45, then_observe=True)
             return True
 
         self._state_end = now + self._rotate_sec
@@ -1264,11 +1271,7 @@ class ObstacleAvoidanceNode(Node):
             and snap.front_depth <= self._clear
         )
         low_suspicious = self._low_obstacle_hit(snap)
-        dynamic_suspicious = (
-            snap.dynamic
-            and math.isfinite(front)
-            and front <= self._dynamic_observe
-        )
+        dynamic_suspicious = self._dynamic_observe_hit(snap, front)
         return (
             fused_suspicious
             or lidar_suspicious
@@ -1277,8 +1280,22 @@ class ObstacleAvoidanceNode(Node):
             or dynamic_suspicious
         )
 
+    def _dynamic_observe_hit(self, snap: Snap, front: float) -> bool:
+        if not snap.dynamic:
+            return False
+        if not math.isfinite(front):
+            return True
+        if front <= self._dynamic_observe:
+            return True
+
+        closing = snap.closing_speed if math.isfinite(snap.closing_speed) else 0.0
+        approach_window = max(self._dynamic_observe, self._clear + 0.25)
+        return closing >= 0.05 and front <= approach_window
+
     def _depth_confirms_clear(self, snap: Snap) -> bool:
         if self._low_obstacle_hit(snap):
+            return False
+        if self._dynamic_observe_hit(snap, self._effective_front(snap)):
             return False
         return (
             snap.depth_ok
@@ -1623,7 +1640,7 @@ class ObstacleAvoidanceNode(Node):
 
         self._tilt_backup_pending = False
         self._tilt_recovery_active = True
-        self._start_backup()
+        self._start_backup(duration=0.45, then_observe=True)
         self._handle_backup(twist, snap, now)
         self._log('tilt_stop_backup', snap)
         return True
