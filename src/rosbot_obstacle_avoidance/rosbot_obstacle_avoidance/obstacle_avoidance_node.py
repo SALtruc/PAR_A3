@@ -816,6 +816,7 @@ class ObstacleAvoidanceNode(Node):
     def _start_dodge(self, snap: Snap):
         self._side_escape_count = 0
         self._turn_dir = self._clearer_side(snap.left, snap.right)
+        self._dynamic_first_seen = None
         self._set_state(DODGE, self._dodge_sec)
 
     def _handle_dodge(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
@@ -988,6 +989,10 @@ class ObstacleAvoidanceNode(Node):
         self._contact_pending = False
         self._backup_then_observe = then_observe
         self._backup_then_dodge = then_dodge
+        # Robot motion during backup distorts dynamic detection (depth camera
+        # moves, LIDAR sees rapidly changing distances). Reset the timer so the
+        # dynamic window starts fresh once the maneuver finishes.
+        self._dynamic_first_seen = None
         self._set_state(BACKUP, self._backup_sec if duration is None else duration)
 
     def _start_corner_backup(self):
@@ -1018,6 +1023,10 @@ class ObstacleAvoidanceNode(Node):
     def _start_rotate(self, snap: Snap):
         self._side_escape_count = 0
         self._turn_dir = self._clearer_side(snap.left, snap.right)
+        # Same as _start_backup: robot yaw change during rotation causes the
+        # depth camera and LIDAR to report spurious "motion". Reset the dynamic
+        # timer so observations after the maneuver start from zero.
+        self._dynamic_first_seen = None
         self._set_state(ROTATE, self._rotate_sec)
 
     def _handle_rotate(self, twist: Twist, snap: Snap, front: float, now: float) -> bool:
