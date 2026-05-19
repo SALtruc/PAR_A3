@@ -304,7 +304,7 @@ echo "[ok] POINTCLOUD_TOPIC=$POINTCLOUD_TOPIC_ARG"
 echo "[ok] DEPTH_TOPIC=$DEPTH_TOPIC_ARG"
 echo "[ok] USE_DEPTH=$USE_DEPTH_ARG"
 echo "[ok] USE_POINTCLOUD=$USE_POINTCLOUD_ARG"
-echo "[ok] LOW_OBSTACLE_DISTANCE=${LOW_OBSTACLE_DISTANCE:-0.45}"
+echo "[ok] LOW_OBSTACLE_DISTANCE=${LOW_OBSTACLE_DISTANCE:-0.30}"
 echo "[ok] LOW_OBSTACLE_BACKUP_DISTANCE=${LOW_OBSTACLE_BACKUP_DISTANCE:-0.20}"
 echo "[ok] LOW_OBSTACLE_HOLD_SEC=${LOW_OBSTACLE_HOLD_SEC:-0.70}"
 echo "[ok] POINTCLOUD_USE_TF=${POINTCLOUD_USE_TF:-false}"
@@ -330,7 +330,7 @@ exec ros2 launch rosbot_obstacle_avoidance project_c_safety.launch.py \
   max_speed:="${MAX_SPEED:-0.215}" \
   backup_speed:="${BACKUP_SPEED:-0.06}" \
   backup_sec:="${BACKUP_SEC:-0.70}" \
-  low_obstacle_distance:="${LOW_OBSTACLE_DISTANCE:-0.45}" \
+  low_obstacle_distance:="${LOW_OBSTACLE_DISTANCE:-0.30}" \
   low_obstacle_backup_distance:="${LOW_OBSTACLE_BACKUP_DISTANCE:-0.20}" \
   pre_dodge_backup_enabled:="${PRE_DODGE_BACKUP_ENABLED:-true}" \
   pre_dodge_backup_sec:="${PRE_DODGE_BACKUP_SEC:-0.40}" \

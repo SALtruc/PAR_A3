@@ -663,15 +663,17 @@ class ObstaclePerceptionNode(Node):
                     fallback_forward,
                     fallback_lateral,
                     fallback_vertical):
-                if abs(fallback_lateral) <= self._pointcloud_center_half_width_m:
-                    fallback_front_vals.append(fallback_forward)
-                if (
-                        self._pointcloud_low_min_height_m
-                        <= fallback_vertical
-                        <= self._pointcloud_low_max_height_m
-                        and abs(fallback_lateral)
-                        <= self._pointcloud_low_center_half_width_m):
+                fallback_is_low = (
+                    self._pointcloud_low_min_height_m
+                    <= fallback_vertical
+                    <= self._pointcloud_low_max_height_m
+                    and abs(fallback_lateral)
+                    <= self._pointcloud_low_center_half_width_m
+                )
+                if fallback_is_low:
                     fallback_low_front_vals.append(fallback_forward)
+                elif abs(fallback_lateral) <= self._pointcloud_center_half_width_m:
+                    fallback_front_vals.append(fallback_forward)
 
             if transform is not None:
                 forward, lateral, vertical = self._transform_point_axes(
@@ -683,13 +685,15 @@ class ObstaclePerceptionNode(Node):
                 )
             if not self._pointcloud_axes_usable(forward, lateral, vertical):
                 continue
-            if (
-                    self._pointcloud_low_min_height_m
-                    <= vertical
-                    <= self._pointcloud_low_max_height_m
-                    and abs(lateral) <= self._pointcloud_low_center_half_width_m):
+            is_low = (
+                self._pointcloud_low_min_height_m
+                <= vertical
+                <= self._pointcloud_low_max_height_m
+                and abs(lateral) <= self._pointcloud_low_center_half_width_m
+            )
+            if is_low:
                 low_front_vals.append(forward)
-            if abs(lateral) <= self._pointcloud_center_half_width_m:
+            if abs(lateral) <= self._pointcloud_center_half_width_m and not is_low:
                 front_vals.append(forward)
             elif (
                     self._pointcloud_side_min_abs_m
@@ -726,7 +730,7 @@ class ObstaclePerceptionNode(Node):
             primary_low_front,
             fallback_low_front,
         )
-        self._pointcloud_front = _min_finite(general_front, self._pointcloud_low_front)
+        self._pointcloud_front = general_front
         self._pointcloud_left = self._pointcloud_stat(left_vals)
         self._pointcloud_right = self._pointcloud_stat(right_vals)
         if sample_count == 0:
@@ -1055,7 +1059,7 @@ class ObstaclePerceptionNode(Node):
         pointcloud_left = self._pointcloud_left if pointcloud_recent else math.inf
         pointcloud_right = self._pointcloud_right if pointcloud_recent else math.inf
         depth_low_front = self._depth_low_front if depth_image_recent else math.inf
-        depth_front = _min_finite(depth_image_front, pointcloud_front, depth_low_front)
+        depth_front = _min_finite(depth_image_front, pointcloud_front)
         depth_motion_active = bool(depth_image_recent and self._depth_motion)
         if depth_motion_active:
             depth_front = _min_finite(depth_front, self._depth_motion_front)

@@ -119,7 +119,7 @@ class ObstacleAvoidanceNode(Node):
         self.declare_parameter('clear_distance', 0.35)
         self.declare_parameter('stop_distance', 0.25)
         self.declare_parameter('hard_backup_distance', 0.10)
-        self.declare_parameter('low_obstacle_distance', 0.45)
+        self.declare_parameter('low_obstacle_distance', 0.30)
         self.declare_parameter('low_obstacle_backup_distance', 0.20)
         self.declare_parameter('low_obstacle_min_points', 8)
         self.declare_parameter('low_obstacle_hold_sec', 0.70)

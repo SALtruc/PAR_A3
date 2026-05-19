@@ -127,7 +127,7 @@ obstacle_avoidance:
     clear_distance: 0.35       # LIDAR/depth suspicious zone (start OBSERVE)
     stop_distance: 0.25        # static obstacle threshold -> DODGE after observation
     hard_backup_distance: 0.10 # emergency threshold -> BACKUP; keep lower than stop_distance
-    low_obstacle_distance: 0.45        # early low-object reaction without the old 60 cm false positives
+    low_obstacle_distance: 0.30        # low-object reaction distance; keeps slippers from triggering too far away
     low_obstacle_backup_distance: 0.20  # backup for low obstacles before the chassis rides over them
     low_obstacle_min_points: 8
     low_obstacle_hold_sec: 0.70
