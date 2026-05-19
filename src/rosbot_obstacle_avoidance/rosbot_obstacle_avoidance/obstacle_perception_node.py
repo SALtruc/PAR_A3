@@ -25,7 +25,7 @@ from rclpy.qos import (
     qos_profile_sensor_data,
 )
 from rclpy.time import Time
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 from sensor_msgs.msg import Image, LaserScan, PointCloud2, Range
 from std_msgs.msg import String
 
@@ -164,6 +164,8 @@ class ObstaclePerceptionNode(Node):
         self.declare_parameter('depth_motion_ego_suppress_ang', 0.10)
         # Any linear.x below this (m/s, negative = backward) counts as backing.
         self.declare_parameter('depth_motion_ego_suppress_lin', -0.005)
+        self.declare_parameter('cmd_vel_topic', '/cmd_vel')
+        self.declare_parameter('cmd_vel_stamped', True)
 
         # Low-region static depth check: catches close obstacles that appear
         # below the centre ROI (y > 0.5 in image = physically lower in scene).
@@ -401,6 +403,8 @@ class ObstaclePerceptionNode(Node):
         self._depth_motion_ego_suppress_lin = float(
             self.get_parameter('depth_motion_ego_suppress_lin').value
         )
+        cmd_vel_topic = str(self.get_parameter('cmd_vel_topic').value)
+        self._cmd_vel_stamped = _as_bool(self.get_parameter('cmd_vel_stamped').value)
         self._depth_low_enabled = _as_bool(
             self.get_parameter('depth_low_enabled').value
         )
@@ -527,10 +531,11 @@ class ObstaclePerceptionNode(Node):
                     )
                 )
 
+        cmd_vel_msg_type = TwistStamped if self._cmd_vel_stamped else Twist
         self._subscriptions.append(
             self.create_subscription(
-                Twist,
-                '/cmd_vel',
+                cmd_vel_msg_type,
+                cmd_vel_topic,
                 self._on_cmd_vel,
                 10,
             )
@@ -941,9 +946,10 @@ class ObstaclePerceptionNode(Node):
         valid = arr[np.isfinite(arr) & (arr > 0.02)]
         return arr, valid
 
-    def _on_cmd_vel(self, msg: Twist):
-        self._cmd_vel_lin_x = msg.linear.x
-        self._cmd_vel_ang_z = msg.angular.z
+    def _on_cmd_vel(self, msg):
+        twist = msg.twist if hasattr(msg, 'twist') else msg
+        self._cmd_vel_lin_x = float(twist.linear.x)
+        self._cmd_vel_ang_z = float(twist.angular.z)
 
     def _update_depth_motion(self, depth_img, encoding: str):
         if not self._depth_motion_enabled:
